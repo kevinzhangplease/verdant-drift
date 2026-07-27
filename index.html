@@ -573,17 +573,15 @@ function syncDrones(){
 }
 function updatePlayer(dt){
   relicTick(dt);
-  const ease = P.focus ? .22 : .42;
-  P.x = lerp(P.x, P.tx, 1-Math.pow(1-ease, dt*60));
-  P.y = lerp(P.y, P.ty, 1-Math.pow(1-ease, dt*60));
+  const prevx = P.x;
+  /* gravity wells / boss pull nudge the target; the ship then snaps to it — 1:1, zero smoothing */
   if (pullField && boss){
-    const a = Math.atan2(boss.y-P.y, boss.x-P.x);
-    P.x += Math.cos(a)*pullField*dt; P.y += Math.sin(a)*pullField*dt;
+    const a = Math.atan2(boss.y-P.ty, boss.x-P.tx);
     P.tx += Math.cos(a)*pullField*dt; P.ty += Math.sin(a)*pullField*dt;
   }
-  P.x = clamp(P.x,14,W-14); P.y = clamp(P.y,40,H-30);
   P.tx = clamp(P.tx,14,W-14); P.ty = clamp(P.ty,40,H-30);
-  P.tilt = lerp(P.tilt, clamp((P.tx-P.x)*.05,-.5,.5), .18);
+  P.x = P.tx; P.y = P.ty;                    /* follow the finger / mouse exactly — no lag */
+  P.tilt = lerp(P.tilt, clamp((P.x-prevx)*.06,-.5,.5), .3);
   P.inv = Math.max(0,P.inv-dt);
   P.thrust = (P.thrust + dt*22)%100;
 
@@ -3648,6 +3646,16 @@ cv.addEventListener('pointermove', ev=>{
 const endDrag = ev=>{ if (ev.pointerId===dragId) dragId=null; };
 cv.addEventListener('pointerup', endDrag);
 cv.addEventListener('pointercancel', endDrag);
+
+/* desktop: the ship tracks the mouse at all times — no need to hold a button */
+if (DESKTOP){
+  window.addEventListener('pointermove', ev=>{
+    if (state!=='playing' || ev.pointerType==='touch') return;
+    const r = cv.getBoundingClientRect();
+    P.tx = clamp(ev.clientX - r.left, 14, W-14);
+    P.ty = clamp(ev.clientY - r.top, 40, H-30);
+  }, { passive:true });
+}
 
 function bindPad(el,onDown,onUp){
   el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); el.classList.add('hot');
