@@ -526,7 +526,7 @@ const BEAT_SEC = 60/96;            /* gameplay beat clock, matched to the 96 BPM
 let lastBeat = -1, beatCount = 0, beatTick = false;
 
 let state='title';
-let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], floats=[], lasers=[], shocks=[], groups=[];
+let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], floats=[], lasers=[], shocks=[], groups=[], ground=[], groundFx=[];
 let boss=null, bossMaxHP=0;
 let shake=0, flash=0, hitstop=0, whiteout=0, curveField=0, pullField=0;
 let score=0, cores=0, chain=0, chainTimer=0, mult=1;
@@ -546,7 +546,7 @@ const MODNAME = { power:'PWR', spread:'SPR', homing:'HOM', pierce:'PRC', drones:
 const DRONE_FORMS = ['FWD','SIDE','TRACK'];   /* drone formation labels (#17) */
 
 function clearField(){
-  enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[];
+  enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[];
   boss=null; curveField=0; pullField=0;
 }
 function resetRun(startLevel){
@@ -556,7 +556,7 @@ function resetRun(startLevel){
   graze=0; grazeStreak=0; grazeMult=0; grazeTimer=0; rank=0;
   P.lives = diff.lives; P.bombs = 2; P.shield = 0; P.inv = 2; P.alive = true;
   P.mods = { power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 };
-  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0; P.droneForm = 0;
+  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0; P.droneForm = 0; P.gsT = 0;
   MODMAX.power=5; MODMAX.spread=3; MODMAX.rapid=3; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
   if (startLevel >= 6) ascend();
   /* later sectors start you geared up — they're balanced for it */
@@ -677,6 +677,12 @@ function updatePlayer(dt){
     d.fireT -= dt;
     if (d.fireT<=0){ d.fireT=.3; shoot(d.x, d.y, aim, 640, 1.1, 0); }
   }
+
+  /* ground-strike sub-weapon (#3/#4) — aimed by ship position, auto-drops on the reticle below */
+  if (ground.length && P.alive){
+    P.gsT = (P.gsT||0) - dt;
+    if (P.gsT<=0){ P.gsT = .5; groundStrike(P.x, clamp(P.y-GS_AHEAD,30,H-40), 5 + P.mods.power); }
+  }
 }
 function shoot(x,y,a,sp,dmg,pierce){ dmg*=dmgMul; pierce+=pierceBonus;
   pbullets.push({ x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:4, dmg, pierce, life:2.2, trail:0 });
@@ -715,7 +721,7 @@ function useBomb(){
     return;
   }
   P.bombs--; P.inv = Math.max(P.inv,1.8);
-  shocks.push({ x:P.x, y:P.y, r:20, max:Math.hypot(W,H)*1.05, hitB:new Set(), hitE:new Set() });
+  shocks.push({ x:P.x, y:P.y, r:20, max:Math.hypot(W,H)*1.05, hitB:new Set(), hitE:new Set(), hitG:new Set() });
   whiteout=.35; shake=20; Sound.bombFx(); haptic([0,60,40,80]);
   teach('bomb', 'The <b>shockwave</b> sweeps outward — it wipes enemy fire into crystals and damages everything it touches.');
   refreshHUD(true);
@@ -745,6 +751,8 @@ function updateShocks(dt){
         damageBoss(16);
       }
     }
+    for (let gi=ground.length-1;gi>=0;gi--){ const gg=ground[gi];
+      if (Math.hypot(gg.x-s.x,gg.y-s.y) <= s.r && !s.hitG.has(gg)){ s.hitG.add(gg); damageGround(gg,12); } }
     if (s.r > s.max) shocks.splice(i,1);
   }
 }
@@ -1018,6 +1026,10 @@ function damageEnemy(e,dmg,silent){
     let d = Math.abs(((a-e.sa+Math.PI*3)%TAU)-Math.PI);
     if (d < .7 && !silent){ e.flash=.4; return false; }
   }
+  if (ground.length && !silent && enemyShielded(e)){   /* a ground pylon is protecting it (#3) */
+    dmg *= .2;
+    if (rand()<.05) floatText(e.x,e.y-e.r,'SHIELDED',PAL.boss);
+  }
   e.hp -= dmg; e.flash = 1;
   if (e.hp<=0){ killEnemy(e,silent); return true; }
   return false;
@@ -1045,6 +1057,119 @@ function killEnemy(e,silent){
   shake = Math.max(shake, 4+T.r*.14);
 }
 function rollMod(){ return pick(['power','power','spread','rapid','homing','pierce','drones','shield','bomb']); }
+
+/* ============================================================
+   7b · the ground plane (#3) — a second targetable layer below the air fight.
+   Air fire can't touch it; only the ground-strike reticle (#4) can. Ground fire is
+   still hot; the reticle and its impacts are player-cool. Legibility rule holds.
+   ============================================================ */
+const GROUND = {
+  bunker: { hp:14, r:22, score:400 },
+  pylon:  { hp:22, r:24, score:640, shieldR:150 }   /* shields air enemies within range */
+};
+const GSCROLL = 72, GS_AHEAD = 120;
+function spawnGround(type,x,opts){
+  const t = GROUND[type];
+  const g = Object.assign({ type, x:clamp(x,30,W-30), y:-50, r:t.r, hp:t.hp*diff.hp, maxhp:t.hp*diff.hp,
+                            fireT:rnd(1.2,2.8), t:0, flash:0 }, opts||{});
+  ground.push(g);
+  teach('ground','Targets on the <b>ground below</b> — your cool <b>strike reticle</b> auto-hits them. Line it up by moving.');
+  return g;
+}
+function groundLine(type,n){ for (let i=0;i<n;i++) spawnGround(type, W*(i+1)/(n+1) + rnd(-24,24)); }
+function updateGround(dt){
+  for (let i=ground.length-1;i>=0;i--){
+    const g = ground[i]; g.t += dt; g.y += GSCROLL*dt; g.flash = Math.max(0,g.flash-dt*5);
+    if (g.y > H+70){ swapDel(ground,i); continue; }
+    if (g.type==='bunker' && g.y>16 && g.y<H-30){
+      g.fireT -= dt*RATE;
+      if (g.fireT<=0){ g.fireT = rnd(1.9,3.0); fireAt(g.x,g.y,P.x,P.y,175*BV,{r:6}); }
+    }
+  }
+}
+function enemyShielded(e){
+  for (const g of ground) if (g.type==='pylon' && dist2(g.x,g.y,e.x,e.y) < GROUND.pylon.shieldR*GROUND.pylon.shieldR) return true;
+  return false;
+}
+function damageGround(g,dmg){
+  g.hp -= dmg; g.flash = 1;
+  if (g.hp>0) return;
+  const i = ground.indexOf(g); if (i>=0) swapDel(ground,i);
+  const T = GROUND[g.type];
+  burst(g.x,g.y,26,PAL.foe,240); Sound.boom(.8); shake = Math.max(shake,8);
+  addScore(T.score,g.x,g.y);
+  for (let k=0;k<rint(2,4);k++) dropPickup(g.x+rnd(-14,14),g.y,'crystal');
+  if (rand()<.4) dropPickup(g.x,g.y,rollMod());
+  if (g.type==='pylon') floatText(g.x,g.y-20,'SHIELD DOWN',PAL.bolt);
+}
+function groundStrike(x,y,dmg){
+  let hit = false;
+  for (let i=ground.length-1;i>=0;i--){ const g=ground[i];
+    if (dist2(g.x,g.y,x,y) < (44+g.r)*(44+g.r)){ damageGround(g,dmg); hit = true; } }
+  groundFx.push({ x, y, t:0, hit });
+  for (let k=0;k<(hit?7:3);k++){ const a=rnd(0,TAU), s=rnd(40,150);
+    pPart({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:rnd(.15,.35), r:rnd(1,2.4), c:PAL.bolt, g:0 }); }
+}
+/* --- ground render (drawn below the air combat) --- */
+function drawGround(){
+  for (const g of ground){
+    if (g.type==='pylon'){                       /* the shielded zone — a faint hot dome */
+      ctx.strokeStyle=rgba(PAL.boss,.16+Math.sin(g.t*3)*.05); ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(g.x,g.y,GROUND.pylon.shieldR,0,TAU); ctx.stroke();
+    }
+    ctx.save(); ctx.translate(g.x,g.y);
+    if (g.type==='bunker') dwBunker(g); else dwPylon(g);
+    ctx.restore();
+  }
+}
+function dwBunker(g){
+  const sh = g.flash>0?'rgba(255,255,255,.6)':'rgba(10,16,22,.92)';
+  ctx.save(); ctx.scale(1,.6);                    /* squashed → reads as lying on the ground */
+  shellPath(6,g.r); ctx.fillStyle=sh; ctx.fill();
+  ctx.strokeStyle=rgba(PAL.foe,.6); ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fillRect(-3,-g.r*.5,6,g.r*.7);
+  ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.foe,.9); ctx.fill();
+  ctx.strokeStyle=rgba(PAL.foe,.45); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,0,g.r+3,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
+  addGlow(g.x,g.y,g.r*1.4,PAL.foe,.28+g.flash*.4);
+}
+function dwPylon(g){
+  const sh = g.flash>0?'rgba(255,255,255,.6)':'rgba(14,12,22,.92)';
+  ctx.save(); ctx.rotate(g.t*.6);
+  ctx.beginPath(); for (let i=0;i<3;i++){ const a=i/3*TAU, x=Math.cos(a)*g.r, y=Math.sin(a)*g.r*.6; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.closePath(); ctx.fillStyle=sh; ctx.fill(); ctx.strokeStyle=rgba(PAL.boss,.7); ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(0,0,7+Math.sin(g.t*4)*2,0,TAU); ctx.fillStyle=rgba(PAL.crystal,.9); ctx.fill();
+  ctx.strokeStyle=rgba(PAL.boss,.45); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,0,g.r+3,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
+  addGlow(g.x,g.y,g.r*1.5,PAL.boss,.32+g.flash*.4);
+}
+function drawReticle(){
+  if (!ground.length || !P.alive) return;
+  const rx = P.x, ry = clamp(P.y-GS_AHEAD,30,H-40);
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.strokeStyle=rgba(PAL.bolt,.7); ctx.lineWidth=1.6;
+  const s=13, o=6;
+  for (const c of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    ctx.beginPath();
+    ctx.moveTo(rx+c[0]*s, ry+c[1]*s - c[1]*o); ctx.lineTo(rx+c[0]*s, ry+c[1]*s); ctx.lineTo(rx+c[0]*s - c[0]*o, ry+c[1]*s);
+    ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(rx,ry,2.2,0,TAU); ctx.fillStyle=rgba(PAL.bolt,.9); ctx.fill();
+  ctx.restore();
+}
+function drawGroundFx(dt){
+  ctx.globalCompositeOperation='lighter';
+  for (let i=groundFx.length-1;i>=0;i--){
+    const f = groundFx[i]; f.t += dt;
+    const k = clamp(f.t/.3,0,1);
+    ctx.strokeStyle=rgba(PAL.bolt,(1-k)*.7); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(f.x,f.y,6+k*40,0,TAU); ctx.stroke();
+    if (f.t>.3) swapDel(groundFx,i);
+  }
+  ctx.globalCompositeOperation='source-over';
+}
 
 /* ============================================================
    8 · boss framework
@@ -2407,6 +2532,7 @@ const LEVELS = [
   { spawn:()=>row('drifter',rint(4,5)) }, { wait:3.4 },
   { spawn:()=>vee('drifter',rint(5,7)) }, { wait:3.6 },
   { spawn:()=>row('weaver',rint(3,4)) }, { wait:4.2 },
+  { spawn:()=>spawnGround('bunker',W*.5) }, { wait:3.4 },
   { spawn:()=>{ row('drifter',3); arcRow('weaver',2); } }, { wait:4.4 },
   { spawn:()=>lancers(rint(2,3)) }, { wait:3.2 },
   { spawn:()=>{ const e=spawnEnemy('turret',W*.3,-40,{holdY:H*.16}); e.drop='power';
@@ -2434,9 +2560,11 @@ const LEVELS = [
   { banner:{t:'Ashfall Boneyard',s:'Mind the wreckage — it is solid'} }, { wait:3.0 },
   { spawn:()=>row('drifter',4) }, { wait:3.2 },
   { spawn:()=>scavvers(2) }, { wait:3.0 },
+  { spawn:()=>groundLine('bunker',2) }, { wait:4.0 },
   { spawn:()=>{ const e=spawnEnemy('hauler',W*.5,-60,{holdY:H*.15}); e.drop='power'; } }, { wait:4.4 },
   { spawn:()=>{ scavvers(3); row('drifter',3); } }, { wait:4.2 },
   { spawn:()=>lancers(3) }, { wait:3.4 },
+  { spawn:()=>{ spawnGround('pylon',W*.5); groundLine('bunker',1); } }, { wait:5.0 },
   { spawn:()=>{ spawnEnemy('hauler',W*.28,-60,{holdY:H*.14}); spawnEnemy('hauler',W*.72,-90,{holdY:H*.2}); } }, { wait:5.6 },
   { spawn:()=>{ scavvers(4); spawnEnemy('turret',W/2,-40,{holdY:H*.18}); } }, { wait:5.0 },
   { spawn:()=>{ const e=spawnEnemy('sentry',W*.5,-70,{holdY:H*.2}); e.drop='rapid'; row('weaver',3); } },
@@ -2485,6 +2613,7 @@ const LEVELS = [
   { banner:{t:'The Lattice',s:'The grid turns. Do not be on it.'} }, { wait:3.0 },
   { spawn:()=>row('drifter',5) }, { wait:3.4 },
   { spawn:()=>{ for (let i=0;i<3;i++) spawnEnemy('blinker',rnd(W*.2,W*.8),-30,{holdY:rnd(H*.1,H*.3)}); } }, { wait:4.2 },
+  { spawn:()=>{ spawnGround('pylon',W*.32); spawnGround('pylon',W*.7); } }, { wait:5.0 },
   { spawn:()=>{ const e=spawnEnemy('prism',W*.35,-50,{holdY:H*.18}); e.drop='pierce';
                 spawnEnemy('prism',W*.65,-80,{holdY:H*.24}); } }, { wait:5.2 },
   { spawn:()=>{ vee('drifter',7); for (let i=0;i<2;i++) spawnEnemy('blinker',rnd(W*.2,W*.8),-30,{holdY:H*.2}); } }, { wait:4.4 },
@@ -2900,6 +3029,7 @@ function update(dt){
   updatePlayer(dt);
   updateShocks(dt);
   updateGroups(dt);
+  updateGround(dt);
   if (hazard) hazard.update(dt);
 
   if (chain>0){ chainTimer -= dt; if (chainTimer<=0){ chain=0; recalcMult(); refreshHUD(); } }
@@ -2999,10 +3129,12 @@ function update(dt){
   }
 
   /* pickups */
+  const poc = P.alive && P.y < H*0.25;          /* point-of-collection (#18): the top vacuums everything */
+  if (poc) teach('poc','The <b>top of the screen</b> vacuums every crystal — dive up to sweep them in.');
   const magnetR = (P.relics&&P.relics.well) ? Math.hypot(W,H) : 120 + chain*2;
   for (let i=pickups.length-1;i>=0;i--){
     const p = pickups[i]; p.t += dt;
-    if (P.alive && dist2(p.x,p.y,P.x,P.y) < magnetR*magnetR) p.mag = true;
+    if (P.alive && (poc || dist2(p.x,p.y,P.x,P.y) < magnetR*magnetR)) p.mag = true;
     if (p.mag && P.alive){
       const a=Math.atan2(P.y-p.y,P.x-p.x), sp=260+p.t*160;
       p.vx=lerp(p.vx,Math.cos(a)*sp,.3); p.vy=lerp(p.vy,Math.sin(a)*sp,.3);
@@ -3048,10 +3180,12 @@ function render(dt){
   if (hazard && state!=='title') hazard.drawBack();
 
   if (state !== 'title'){
+    drawGround();
     drawPickups(); drawParticles(); drawEnemies();
     if (boss) drawBoss();
     drawLasers(); drawShocks(); drawPlayerBullets(); drawEnemyBullets();
     if (P.alive) drawShip();
+    drawGroundFx(dt); drawReticle();
     drawFloats();
     if (hazard) hazard.drawFront();
   } else { drawParticles(); drawTitleShip(); }
@@ -3061,6 +3195,11 @@ function render(dt){
 
   if (flash>.01){ const fa=flash*.34*Settings.flash*(Settings.safeFlash?.4:1); ctx.fillStyle='rgba(255,80,140,'+fa+')'; ctx.fillRect(0,0,W,H); }
   if (whiteout>.01){ const wa=whiteout*.8*Settings.flash*(Settings.safeFlash?.3:1); ctx.fillStyle='rgba(220,255,245,'+wa+')'; ctx.fillRect(0,0,W,H); }
+  if (state==='playing' && P.alive && P.y < H*0.25){   /* point-of-collection cue (#18) */
+    const g = ctx.createLinearGradient(0,0,0,H*0.25);
+    g.addColorStop(0,rgba(PAL.bolt,.12)); g.addColorStop(1,rgba(PAL.bolt,0));
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H*0.25);
+  }
   drawVignette();
 }
 
@@ -3633,6 +3772,7 @@ function screenHelp(){
       <p><b>Graze.</b> Skim past enemy fire without being hit and your multiplier climbs beyond ×8, up to <em>×16</em>. The tiny hitbox is a weapon — the closer you fly, the faster you score. Sustained grazing also <em>morphs your cannon</em> wider and heavier for a moment.</p>
       <p><b>Break.</b> Grazing and close-range kills fill the <em>Break</em> meter. When it tops out, your ship boils over — fire rate and damage surge, and every kill spills extra crystals. Stay aggressive to earn it.</p>
       <p><b>Upgrades &amp; drones.</b> Lettered pickups stack: PWR damage, SPR shots, RPD fire rate, HOM missiles, PRC pierce, DRN drones. Cycle drones between <em>FWD / SIDE / TRACK</em> with the FORM pad (or <em>C</em> / gamepad Y). Losing a life sheds one upgrade — but it drops as a <em>wreck</em> you can fly back over to reclaim.</p>
+      <p><b>Ground &amp; reticle.</b> Some sectors have installations on the ground below — bunkers that fire up, and pylons that shield the air enemies around them. A cool <em>reticle</em> ahead of your ship auto-strikes them; line it up by moving. Fly into the <em>top of the screen</em> to vacuum every crystal at once.</p>
       <p><b>Checkpoints.</b> Each sector has one, right after the mid-boss. Run out of lives after it and you can resume there.</p>
     </div>
     <div class="btnRow"><button class="btn" id="back">Back</button></div>`;
