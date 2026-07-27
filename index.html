@@ -3763,17 +3763,48 @@ function screenSettings(){
 function screenHelp(){
   elVeil.innerHTML = `
     <div class="eyebrow">How to play</div>
-    <h2>Six things</h2>
+    <h2>Flight manual</h2>
     <div class="helpList">
-      <p><b>Fly.</b> Drag anywhere on screen. The ship follows your finger at an offset so your thumb never covers it. Your cannon fires on its own — always.</p>
-      <p><b>Chain.</b> Every kill drops crystals. Collect eight without a pause and your multiplier climbs, up to ×8. Let the timer lapse and it resets.</p>
-      <p><b>Bomb.</b> <em>Tap BOMB</em> to release a shockwave that expands from your ship. It wipes every enemy bullet it passes — turning half of them into crystals — damages everything on screen, and leaves you invulnerable for about two seconds. Use it when you're cornered, or right before a boss phase change.</p>
-      <p><b>Focus.</b> Hold FOCUS to halve your speed, narrow your shot spread, and reveal your real hitbox — a dot far smaller than the ship. This is how you thread dense patterns.</p>
-      <p><b>Graze.</b> Skim past enemy fire without being hit and your multiplier climbs beyond ×8, up to <em>×16</em>. The tiny hitbox is a weapon — the closer you fly, the faster you score. Sustained grazing also <em>morphs your cannon</em> wider and heavier for a moment.</p>
-      <p><b>Break.</b> Grazing and close-range kills fill the <em>Break</em> meter. When it tops out, your ship boils over — fire rate and damage surge, and every kill spills extra crystals. Stay aggressive to earn it.</p>
-      <p><b>Upgrades &amp; drones.</b> Lettered pickups stack: PWR damage, SPR shots, RPD fire rate, HOM missiles, PRC pierce, DRN drones. Cycle drones between <em>FWD / SIDE / TRACK</em> with the FORM pad (or <em>C</em> / gamepad Y). Losing a life sheds one upgrade — but it drops as a <em>wreck</em> you can fly back over to reclaim.</p>
-      <p><b>Ground &amp; reticle.</b> Some sectors have installations on the ground below — bunkers that fire up, and pylons that shield the air enemies around them. A cool <em>reticle</em> ahead of your ship auto-strikes them; line it up by moving. Fly into the <em>top of the screen</em> to vacuum every crystal at once.</p>
-      <p><b>Checkpoints.</b> Each sector has one, right after the mid-boss. Run out of lives after it and you can resume there.</p>
+      <div class="grpLabel">Controls</div>
+      <p><b>Fly.</b> <em>Touch</em> — drag anywhere; the ship tracks your finger 1:1 with a small offset so your thumb never hides it. <em>Desktop</em> — the ship follows your mouse at all times, no click needed. Your cannon always fires on its own.</p>
+      <p><b>Actions.</b> <em>Touch</em> — the BOMB, FORM and FOCUS pads along the bottom. <em>Desktop</em> — left-click bombs, hold right-click to focus, <b>C</b> cycles drone formation, <b>Esc/P</b> pauses; you can also fly with WASD/arrows, focus with Shift/X, bomb with Space/Z. <em>Gamepad</em> — stick or d-pad to fly, A/R bomb, X/L focus, Y formation, Start pause.</p>
+
+      <div class="grpLabel" style="margin-top:18px">The core loop</div>
+      <p><b>Your hitbox is tiny.</b> Only a dot at the ship's centre is vulnerable — far smaller than the sprite. A faint marker shows it (toggle in Settings). The whole game is about threading gaps that look impossible.</p>
+      <p><b>Read the colour.</b> Every sector recolours, but the rule never changes: <em>your fire is always cool cyan-white; enemy fire is always hot magenta-to-orange.</em> If it's warm and glowing, it can hurt you.</p>
+      <p><b>Chain &amp; cores.</b> Every kill spills crystals. Gather eight in a row before the chain timer lapses and your multiplier steps up, to ×8; let it lapse and it drops to ×1. <b>Cores</b> is your running crystal count for the run.</p>
+
+      <div class="grpLabel" style="margin-top:18px">Aggression — risk pays</div>
+      <p><b>Graze.</b> Skim enemy fire without being hit. A cool aura lights around you, your multiplier can climb past ×8 all the way to <em>×16</em>, and sustained grazing <em>morphs your cannon</em> wider and heavier for a moment. The closer you fly, the harder and faster you hit.</p>
+      <p><b>Break.</b> Grazing and close-range kills fill the BREAK meter (top-right). When it tops out the ship boils over for a few seconds — fire rate and damage surge and every kill spills extra crystals. Taking a hit empties it: Break rewards staying dangerous.</p>
+      <p><b>Focus.</b> Hold Focus to tighten your fire into a concentrated single-target stream and reveal your exact hitbox. Grazing still buffs damage, but Focus keeps the shot narrow instead of widening it — wide clear vs. focused melt. Optionally it also slows the ship for pixel aim (Settings).</p>
+
+      <div class="grpLabel" style="margin-top:18px">Tools</div>
+      <p><b>Bomb.</b> A shockwave expands from the ship: it sweeps every enemy bullet it passes — turning half into crystals — damages every enemy, boss part and ground target, and leaves you invulnerable ~2s. Save it for when you're cornered or a boss is about to flip phase. Bombs are limited; you find more and earn one each sector cleared.</p>
+      <p><b>Shield.</b> A SHIELD pickup (and some relics) orbits your ship and soaks one hit before your lives are touched.</p>
+      <p><b>Upgrades.</b> Lettered pickups stack and persist across sectors: <b>PWR</b> damage, <b>SPR</b> extra shots, <b>RPD</b> fire rate, <b>HOM</b> homing missiles, <b>PRC</b> pierce, <b>DRN</b> drones.</p>
+      <p><b>Drone formations.</b> With drones out, cycle <em>FWD</em> (tight forward arrow), <em>SIDE</em> (flank guard, wide coverage) and <em>TRACK</em> (orbit and fire at the nearest threat) — FORM pad, C, or gamepad Y.</p>
+      <p><b>Wreck recovery.</b> Losing a life sheds just one upgrade — and it drops as a glowing <em>wreck</em>. You're briefly invulnerable on respawn: fly back over it to reclaim the level.</p>
+      <p><b>Relics.</b> From sector seven on you're offered a permanent relic between sectors and your weapon caps come off — bigger builds than the early game allows.</p>
+
+      <div class="grpLabel" style="margin-top:18px">The ground below</div>
+      <p><b>A second plane.</b> Some sectors have targets on the ground beneath the fight. <em>Bunkers</em> fire hot bullets up at you; <em>pylons</em> project a dome that shields the air enemies inside it until you destroy it.</p>
+      <p><b>The reticle.</b> Your air cannon can't reach the ground — a cool <em>reticle</em> ahead of the ship auto-strikes it instead. Aim it by moving the ship (more PWR = harder strikes). You're juggling air dodging and ground lining-up at once.</p>
+      <p><b>Point of collection.</b> Fly into the top quarter of the screen and every item on screen vacuums to you at once — dangerous ground to hold, but it sweeps the field.</p>
+
+      <div class="grpLabel" style="margin-top:18px">Enemies, bosses &amp; the beat</div>
+      <p><b>Pacing.</b> Waves mix slow zone-control patterns with fast, targeted sniper shots — read the room and keep streaming sideways.</p>
+      <p><b>Modular bosses.</b> Blow off a module (<em>MODULE DOWN</em>) to strip the attack it fed; clear them all and the core is exposed. Phase changes snap to the music's downbeat, and later phases fire a fast sniper on the beat — watch the rhythm.</p>
+      <p><b>Telegraphs.</b> Dashed lines are charging lances; columns and standing waves warn before they fire. If a pattern leaves a gap, it stays open — find it.</p>
+
+      <div class="grpLabel" style="margin-top:18px">Difficulty &amp; flow</div>
+      <p><b>Baseline.</b> Three difficulties — <em>Drift</em> (forgiving), <em>Arcade</em> (as tuned), <em>Void</em> (unkind) — plus a speed slider.</p>
+      <p><b>Dynamic rank.</b> A hidden engine watches how you're flying: survive cleanly and aggressively and enemy fire quietly speeds up; take a hit and it eases off. On Void — or once you're flying well — patterns thicken into overlapping curtains rather than turning enemies into sponges. If a gap exists, there is always a way through.</p>
+
+      <div class="grpLabel" style="margin-top:18px">Your run</div>
+      <p><b>Twelve sectors,</b> each with its own palette, roster, hazard, mid-boss and warden. A checkpoint sits right after each mid-boss — run out of lives past it and you can resume there.</p>
+      <p><b>Daily Drift &amp; saves.</b> The Daily is one shared seed for the day — the same run for everyone, good for score-chasing. Your best scores and all settings are saved automatically.</p>
+      <p><b>Comfort.</b> Settings tune screen-shake, flash and a photosensitivity-safe mode, a colorblind cue, the hitbox marker, haptics, Focus-slow and quality. Adjust freely — none of it changes the rules.</p>
     </div>
     <div class="btnRow"><button class="btn" id="back">Back</button></div>`;
   $('back').onclick = screenTitle;
