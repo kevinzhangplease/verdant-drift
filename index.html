@@ -572,6 +572,7 @@ function startLevelAt(i){
   applyPalette(i);
   Sound.setMode(i);
   debris.length = 0;
+  groundActive = false; groundReveal = 0; scrollGround = 0;
   const L = LEVELS[i];
   hazard = L.hazard ? HAZARDS[L.hazard]() : null;
   step=0; waitTime=0; waitClear=false; elapsed=0; checkpoint=null;
@@ -1068,16 +1069,20 @@ const GROUND = {
   pylon:  { hp:22, r:24, score:640, shieldR:150 }   /* shields air enemies within range */
 };
 const GSCROLL = 72, GS_AHEAD = 120;
+let groundActive = false, groundReveal = 0, scrollGround = 0;   /* the visible ground surface */
+const STEEL = [150,175,195], GRID = [110,150,175];
 function spawnGround(type,x,opts){
   const t = GROUND[type];
   const g = Object.assign({ type, x:clamp(x,30,W-30), y:-50, r:t.r, hp:t.hp*diff.hp, maxhp:t.hp*diff.hp,
                             fireT:rnd(1.2,2.8), t:0, flash:0 }, opts||{});
   ground.push(g);
-  teach('ground','Targets on the <b>ground below</b> — your cool <b>strike reticle</b> auto-hits them. Line it up by moving.');
+  groundActive = true;
+  teach('ground','A <b>surface passes below</b> — those are ground targets. Your cool <b>strike reticle</b> auto-hits them; line it up by moving.');
   return g;
 }
 function groundLine(type,n){ for (let i=0;i<n;i++) spawnGround(type, W*(i+1)/(n+1) + rnd(-24,24)); }
 function updateGround(dt){
+  scrollGround += GSCROLL*dt;                     /* keep the grid locked to the installations */
   for (let i=ground.length-1;i>=0;i--){
     const g = ground[i]; g.t += dt; g.y += GSCROLL*dt; g.flash = Math.max(0,g.flash-dt*5);
     if (g.y > H+70){ swapDel(ground,i); continue; }
@@ -1110,40 +1115,78 @@ function groundStrike(x,y,dmg){
   for (let k=0;k<(hit?7:3);k++){ const a=rnd(0,TAU), s=rnd(40,150);
     pPart({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:rnd(.15,.35), r:rnd(1,2.4), c:PAL.bolt, g:0 }); }
 }
-/* --- ground render (drawn below the air combat) --- */
+/* --- the ground plane, drawn below the air combat --- */
+/* a scrolling structural grid so the second layer reads as a real floor with the
+   installations locked to it (matched to GSCROLL) — fades in when ground appears */
+function drawGroundPlane(dt){
+  groundReveal = lerp(groundReveal, groundActive?1:0, 1-Math.pow(1-.05, dt*60));
+  if (groundReveal < .01) return;
+  const a = groundReveal, cell = 72;
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.lineWidth = 1;
+  const oy = ((scrollGround % cell) + cell) % cell;
+  for (let y=oy; y<=H; y+=cell){
+    const depth = .3 + .7*(y/H);                  /* brighter toward the bottom = closer */
+    ctx.strokeStyle = rgba(GRID, .06*a*depth);
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+  }
+  for (let x=cell/2; x<W; x+=cell){
+    ctx.strokeStyle = rgba(GRID, .04*a);
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+  }
+  ctx.restore();
+}
 function drawGround(){
   for (const g of ground){
-    if (g.type==='pylon'){                       /* the shielded zone — a faint hot dome */
-      ctx.strokeStyle=rgba(PAL.boss,.16+Math.sin(g.t*3)*.05); ctx.lineWidth=1.5;
+    if (g.type==='pylon'){                        /* the shielded zone — a faint hot dome */
+      ctx.strokeStyle=rgba(PAL.boss,.2+Math.sin(g.t*3)*.06); ctx.lineWidth=1.5;
       ctx.beginPath(); ctx.arc(g.x,g.y,GROUND.pylon.shieldR,0,TAU); ctx.stroke();
     }
+    ctx.fillStyle='rgba(0,0,0,.4)';               /* shadow lifts it off the floor */
+    ctx.beginPath(); ctx.ellipse(g.x, g.y+g.r*.6, g.r*1.15, g.r*.5, 0,0,TAU); ctx.fill();
     ctx.save(); ctx.translate(g.x,g.y);
     if (g.type==='bunker') dwBunker(g); else dwPylon(g);
     ctx.restore();
+    drawGroundBracket(g);                          /* a steel bracket marks it as a ground target */
   }
 }
-function dwBunker(g){
-  const sh = g.flash>0?'rgba(255,255,255,.6)':'rgba(10,16,22,.92)';
-  ctx.save(); ctx.scale(1,.6);                    /* squashed → reads as lying on the ground */
-  shellPath(6,g.r); ctx.fillStyle=sh; ctx.fill();
-  ctx.strokeStyle=rgba(PAL.foe,.6); ctx.lineWidth=2; ctx.stroke();
-  ctx.restore();
-  ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fillRect(-3,-g.r*.5,6,g.r*.7);
-  ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.foe,.9); ctx.fill();
-  ctx.strokeStyle=rgba(PAL.foe,.45); ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(0,0,g.r+3,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
-  addGlow(g.x,g.y,g.r*1.4,PAL.foe,.28+g.flash*.4);
+function drawGroundBracket(g){
+  const s = g.r+13, o = 8;
+  ctx.strokeStyle=rgba(STEEL,.4); ctx.lineWidth=1.4;
+  for (const c of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    ctx.beginPath();
+    ctx.moveTo(g.x+c[0]*s, g.y+c[1]*s - c[1]*o); ctx.lineTo(g.x+c[0]*s, g.y+c[1]*s); ctx.lineTo(g.x+c[0]*s - c[0]*o, g.y+c[1]*s);
+    ctx.stroke();
+  }
 }
-function dwPylon(g){
-  const sh = g.flash>0?'rgba(255,255,255,.6)':'rgba(14,12,22,.92)';
-  ctx.save(); ctx.rotate(g.t*.6);
-  ctx.beginPath(); for (let i=0;i<3;i++){ const a=i/3*TAU, x=Math.cos(a)*g.r, y=Math.sin(a)*g.r*.6; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
-  ctx.closePath(); ctx.fillStyle=sh; ctx.fill(); ctx.strokeStyle=rgba(PAL.boss,.7); ctx.lineWidth=2; ctx.stroke();
+function dwBunker(g){                              /* a squat steel gun emplacement */
+  ctx.save(); ctx.scale(1,.62);                   /* squashed base → lying on the ground */
+  ctx.beginPath();
+  for (let i=0;i<8;i++){ const a=i/8*TAU+Math.PI/8, x=Math.cos(a)*(g.r+3), y=Math.sin(a)*(g.r+3); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.closePath(); ctx.fillStyle='rgba(28,36,46,.96)'; ctx.fill();
+  ctx.strokeStyle=rgba(STEEL,.6); ctx.lineWidth=2; ctx.stroke();
   ctx.restore();
-  ctx.beginPath(); ctx.arc(0,0,7+Math.sin(g.t*4)*2,0,TAU); ctx.fillStyle=rgba(PAL.crystal,.9); ctx.fill();
-  ctx.strokeStyle=rgba(PAL.boss,.45); ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(0,0,g.r+3,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
-  addGlow(g.x,g.y,g.r*1.5,PAL.boss,.32+g.flash*.4);
+  ctx.beginPath(); ctx.arc(0,-2,g.r*.55,0,TAU);   /* turret dome */
+  ctx.fillStyle=g.flash>0?'rgba(255,255,255,.75)':'rgba(48,60,74,.98)'; ctx.fill();
+  ctx.strokeStyle=rgba(STEEL,.85); ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fillRect(-3,-g.r*1.15,6,g.r*.8);   /* hot barrel, up */
+  ctx.beginPath(); ctx.arc(0,-2,5+Math.sin(g.t*4)*1.5,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.95); ctx.fill();
+  ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=2.4;
+  ctx.beginPath(); ctx.arc(0,0,g.r+7,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
+  addGlow(g.x,g.y,g.r*1.5,PAL.ebullet,.28+g.flash*.4); addGlow(g.x,g.y,g.r*1.2,STEEL,.14);
+}
+function dwPylon(g){                              /* a tripod shield generator */
+  ctx.save(); ctx.scale(1,.62);
+  shellPath(3,g.r+3); ctx.fillStyle='rgba(26,28,48,.96)'; ctx.fill();
+  ctx.strokeStyle=rgba(STEEL,.5); ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+  ctx.strokeStyle=rgba(STEEL,.75); ctx.lineWidth=3;
+  for (let i=0;i<3;i++){ const a=i/3*TAU+g.t*.3; ctx.beginPath(); ctx.moveTo(0,-4); ctx.lineTo(Math.cos(a)*g.r, Math.sin(a)*g.r*.6+2); ctx.stroke(); }
+  ctx.beginPath(); ctx.arc(0,-6,8+Math.sin(g.t*4)*2,0,TAU);
+  ctx.fillStyle=g.flash>0?'rgba(255,255,255,.75)':rgba(PAL.crystal,.92); ctx.fill();
+  ctx.strokeStyle=rgba(PAL.boss,.8); ctx.lineWidth=2; ctx.stroke();
+  ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=2.4;
+  ctx.beginPath(); ctx.arc(0,0,g.r+7,-Math.PI/2,-Math.PI/2+TAU*(g.hp/g.maxhp)); ctx.stroke();
+  addGlow(g.x,g.y,g.r*1.6,PAL.boss,.3+g.flash*.4);
 }
 function drawReticle(){
   if (!ground.length || !P.alive) return;
@@ -2532,7 +2575,7 @@ const LEVELS = [
   { spawn:()=>row('drifter',rint(4,5)) }, { wait:3.4 },
   { spawn:()=>vee('drifter',rint(5,7)) }, { wait:3.6 },
   { spawn:()=>row('weaver',rint(3,4)) }, { wait:4.2 },
-  { spawn:()=>spawnGround('bunker',W*.5) }, { wait:3.4 },
+  { spawn:()=>groundLine('bunker',2) }, { wait:4.0 },
   { spawn:()=>{ row('drifter',3); arcRow('weaver',2); } }, { wait:4.4 },
   { spawn:()=>lancers(rint(2,3)) }, { wait:3.2 },
   { spawn:()=>{ const e=spawnEnemy('turret',W*.3,-40,{holdY:H*.16}); e.drop='power';
@@ -3180,6 +3223,7 @@ function render(dt){
   if (hazard && state!=='title') hazard.drawBack();
 
   if (state !== 'title'){
+    drawGroundPlane(dt);
     drawGround();
     drawPickups(); drawParticles(); drawEnemies();
     if (boss) drawBoss();
