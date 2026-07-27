@@ -3367,7 +3367,7 @@ function refreshHUD(force){
   if (P.shield>0) mods += '<div class="mod">SHD '+P.shield+'</div>';
   for (const k in P.mods) if (P.mods[k]>0) mods += '<div class="mod">'+MODNAME[k]+' '+P.mods[k]+'</div>';
   elMods.innerHTML = mods;
-  elPadBomb.innerHTML = '<b>'+P.bombs+'</b>'+(DESKTOP?'SPACE':'Bomb');
+  elPadBomb.innerHTML = '<b>'+P.bombs+'</b>'+(DESKTOP?'L-CLICK':'Bomb');
   elPadBomb.classList.toggle('empty', P.bombs<=0);
   elPadBomb.classList.toggle('ready', P.bombs>0 && !taughtBomb);
 }
@@ -3621,13 +3621,21 @@ function togglePause(){
    15 · input
    ============================================================ */
 let dragId = null;
-/* focus can be held from touch, keyboard, or a gamepad at once — combine them */
-let focusTouch=false, focusKey=false, focusPad=false;
-function updateFocus(){ P.focus = focusTouch || focusKey || focusPad; }
+/* focus can be held from touch, keyboard, mouse, or a gamepad at once — combine them */
+let focusTouch=false, focusKey=false, focusPad=false, focusMouse=false;
+function updateFocus(){ P.focus = focusTouch || focusKey || focusPad || focusMouse; }
 function pointFrom(ev){ const r=cv.getBoundingClientRect(); return { x:ev.clientX-r.left, y:ev.clientY-r.top }; }
 cv.addEventListener('pointerdown', ev=>{
   if (state!=='playing') return;
-  ev.preventDefault(); Sound.resume();
+  Sound.resume();
+  /* desktop: left button = bomb, right button = hold-to-focus. Movement is hover-only. */
+  if (ev.pointerType==='mouse'){
+    ev.preventDefault();
+    if (ev.button===2){ focusMouse=true; updateFocus(); }
+    else if (ev.button===0){ useBomb(); }
+    return;
+  }
+  ev.preventDefault();
   if (dragId===null){
     dragId = ev.pointerId;
     const p = pointFrom(ev);
@@ -3655,6 +3663,13 @@ if (DESKTOP){
     P.tx = clamp(ev.clientX - r.left, 14, W-14);
     P.ty = clamp(ev.clientY - r.top, 40, H-30);
   }, { passive:true });
+  /* release right-button focus wherever the mouse is when it comes up */
+  window.addEventListener('pointerup', ev=>{
+    if (ev.pointerType==='mouse' && ev.button===2 && focusMouse){ focusMouse=false; updateFocus(); }
+  });
+  window.addEventListener('blur', ()=>{ if (focusMouse){ focusMouse=false; updateFocus(); } });
+  /* right-click is focus during play, so don't pop the browser menu then */
+  window.addEventListener('contextmenu', e=>{ if (state==='playing') e.preventDefault(); });
 }
 
 function bindPad(el,onDown,onUp){
@@ -3735,6 +3750,7 @@ resize();
 setQualityPref();
 spawnDebris();
 if (Sound.muted){ elSound.textContent='♪̸'; elSound.style.color='rgba(124,154,151,.4)'; }
+if (DESKTOP){ const fl=$('focusLbl'); if (fl) fl.textContent='R-CLICK'; }
 screenTitle();
 refreshHUD(true);
 requestAnimationFrame(frame);
