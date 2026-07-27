@@ -541,9 +541,55 @@ const P = {
   inv:0, fireT:0, missileT:0, focus:false, tilt:0, thrust:0,
   mods:{ power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 }
 };
-const MODMAX  = { power:5, spread:3, homing:2, pierce:2, drones:2, rapid:3 };
+const MODMAX  = { power:4, spread:2, homing:2, pierce:2, drones:2, rapid:2 };
 const MODNAME = { power:'PWR', spread:'SPR', homing:'HOM', pierce:'PRC', drones:'DRN', rapid:'RPD' };
 const DRONE_FORMS = ['FWD','SIDE','TRACK'];   /* drone formation labels (#17) */
+
+/* ---- the power band (#20) ------------------------------------------------
+   A fresh ship used to do ~7 DPS and a maxed one ~230 — a 30× swing against
+   enemies whose HP never moved, so bosses evaporated before their first
+   pattern. Three levers keep the band tight:
+     · a strong base cannon, so a stripped ship is still a ship;
+     · diminishing returns per mod level, so stacking curves off instead of
+       multiplying away;
+     · spread trades per-bullet damage for width rather than adding free DPS.
+   Fresh ≈ 30 DPS, maxed Arcade ≈ 220 — a ~7× band instead of ~30×. */
+const BASE_DMG = 3.0, BASE_RATE = 0.10, SPREAD_TAPER = 0.25, DRONE_DMG = 2.2;
+/* each further level of a mod is worth `decay`× the one before it */
+function modCurve(lv, first, decay){
+  let total = 0, step = first;
+  for (let i=0;i<lv;i++){ total += step; step *= decay; }
+  return total;
+}
+const powerBonus  = lv => modCurve(lv, .30, .68);
+const rapidBonus  = lv => modCurve(lv, .22, .62);
+/* shots fired per volley, and what each one is worth once the arc widens */
+const volleyShots = (m,morShots) => 1 + m.spread + morShots;
+const volleyShare = n => 1/(1 + SPREAD_TAPER*(n-1));
+
+/* An estimate of the ship's damage output relative to a fresh hull — the input
+   to elite/boss HP scaling below. Mirrors the cannon maths in updatePlayer. */
+function loadoutPower(){
+  const m = P.mods;
+  const dmg = BASE_DMG*(1+powerBonus(m.power))*dmgMul;
+  const n = volleyShots(m,0);
+  let perVolley = dmg*volleyShare(n)*n;                 /* main arc, all shots landing */
+  if (m.power>=4) perVolley += dmg*.45*2;               /* the outboard pair */
+  const rate = BASE_RATE/(1+rapidBonus(m.rapid));
+  let dps = perVolley/rate;
+  dps += drones.length*DRONE_DMG/.3;                    /* escorts chip in too */
+  return Math.max(1, dps/(BASE_DMG/BASE_RATE));
+}
+/* Elites and bosses stiffen as you gear up, so the fight still happens — but
+   sub-linearly, so power always outruns HP and nothing becomes a sponge (#7).
+   Trash is deliberately excluded: melting waves is the reward for gearing up. */
+const ELITE_HP_MIN = 12, ELITE_HP_EXP = 0.5, BOSS_HP_EXP = 0.65, BOSS_HP_MUL = 1.35;
+function eliteScale(baseHP){
+  return baseHP < ELITE_HP_MIN ? 1 : Math.pow(loadoutPower(), ELITE_HP_EXP);
+}
+/* A boss cannot be skipped past its own choreography: every phase holds for at
+   least this long, so each fight shows its whole pattern set however hard you hit. */
+const PHASE_MIN = 5, DEFAULT_PHASES = [.66,.33];
 
 function clearField(){
   enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[];
@@ -557,7 +603,7 @@ function resetRun(startLevel){
   P.lives = diff.lives; P.bombs = 2; P.shield = 0; P.inv = 2; P.alive = true;
   P.mods = { power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 };
   P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0; P.droneForm = 0; P.gsT = 0;
-  MODMAX.power=5; MODMAX.spread=3; MODMAX.rapid=3; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
+  MODMAX.power=4; MODMAX.spread=2; MODMAX.rapid=2; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
   if (startLevel >= 6) ascend();
   /* later sectors start you geared up — they're balanced for it */
   const boost = [0,1,2,3,4,5][startLevel];
@@ -624,21 +670,23 @@ function updatePlayer(dt){
 
   const m = P.mods;
   const mor = clamp(P.morphT||0, 0, 1);              /* proximity morph 0..1 (#11) */
-  const rate = (0.135 - m.rapid*0.017)*(P.focus?.92:1);
+  const rate = (BASE_RATE/(1+rapidBonus(m.rapid)))*(P.focus?.92:1);
   P.fireT -= dt;
   if (P.fireT<=0 && P.alive){
     P.fireT = rate;
-    const dmg = (1 + m.power*.55)*(1 + mor*.3);       /* grazing morphs the cannon heavier... */
+    const dmg = BASE_DMG*(1+powerBonus(m.power))*(1 + mor*.3);  /* grazing morphs the cannon heavier... */
     const morShots = P.focus ? 0 : Math.round(mor*2);  /* ...and wider — but Focus keeps it a tight stream (#12) */
-    const n = 1 + m.spread + morShots;
+    const n = volleyShots(m,morShots);
+    /* width costs weight: a wide arc covers more sky, each bolt lands softer */
+    const each = dmg*volleyShare(n);
     const arc = (P.focus?.05:.13)*Math.max(0,n-1);
     for (let i=0;i<n;i++){
       const a = -Math.PI/2 + (n===1?0:(-arc/2 + arc*i/(n-1)));
-      shoot(P.x,P.y-14,a,760,dmg,m.pierce);
+      shoot(P.x,P.y-14,a,760,each,m.pierce);
     }
-    if (m.power>=3){
-      shoot(P.x-11,P.y-6,-Math.PI/2,700,dmg*.6,m.pierce);
-      shoot(P.x+11,P.y-6,-Math.PI/2,700,dmg*.6,m.pierce);
+    if (m.power>=4){
+      shoot(P.x-11,P.y-6,-Math.PI/2,700,dmg*.45,m.pierce);
+      shoot(P.x+11,P.y-6,-Math.PI/2,700,dmg*.45,m.pierce);
     }
     Sound.shot();
   }
@@ -648,7 +696,7 @@ function updatePlayer(dt){
       P.missileT = .78 - m.homing*.16;
       for (let i=0;i<m.homing;i++)
         pbullets.push({ x:P.x+(i?14:-14), y:P.y, vx:(i?110:-110), vy:-160, r:5,
-                        dmg:2.4+m.power*.3, pierce:0, homing:true, life:3, trail:0 });
+                        dmg:4.5+powerBonus(m.power)*3, pierce:0, homing:true, life:3, trail:0 });
     }
   }
   const nd = drones.length;
@@ -676,13 +724,13 @@ function updatePlayer(dt){
     }
     d.drawA = aim;
     d.fireT -= dt;
-    if (d.fireT<=0){ d.fireT=.3; shoot(d.x, d.y, aim, 640, 1.1, 0); }
+    if (d.fireT<=0){ d.fireT=.3; shoot(d.x, d.y, aim, 640, DRONE_DMG, 0); }
   }
 
   /* ground-strike sub-weapon (#3/#4) — aimed by ship position, auto-drops on the reticle below */
   if (ground.length && P.alive){
     P.gsT = (P.gsT||0) - dt;
-    if (P.gsT<=0){ P.gsT = .5; groundStrike(P.x, clamp(P.y-GS_AHEAD,30,H-40), 5 + P.mods.power); }
+    if (P.gsT<=0){ P.gsT = .5; groundStrike(P.x, clamp(P.y-GS_AHEAD,30,H-40), 9 + powerBonus(P.mods.power)*6); }
   }
 }
 function shoot(x,y,a,sp,dmg,pierce){ dmg*=dmgMul; pierce+=pierceBonus;
@@ -799,8 +847,9 @@ const TYPES = {
 
 function spawnEnemy(type,x,y,opts){
   const t = TYPES[type];
+  const hp = t.hp*diff.hp*eliteScale(t.hp);
   const e = Object.assign({
-    type, x, y, r:t.r, hp:t.hp*diff.hp, maxhp:t.hp*diff.hp, t:0, fireT:rnd(.6,1.6),
+    type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6),
     vx:0, vy:t.speed, ang:0, flash:0, phase:rnd(0,TAU), drop:null, state:'in', holdY:H*.2
   }, opts||{});
   enemies.push(e);
@@ -1218,12 +1267,15 @@ function drawGroundFx(dt){
    8 · boss framework
    ============================================================ */
 function spawnBoss(def){
+  /* the fight is built to last: hull is set against the loadout that arrives (#20) */
+  const scale = diff.hp * BOSS_HP_MUL * Math.pow(loadoutPower(), BOSS_HP_EXP);
   const parts = (def.parts ? def.parts() : []).map((p,i) =>
     Object.assign({ id:i, alive:true, r:24, x:W/2, y:-100, fireT:rnd(.5,2) }, p,
-                  { hp:p.hp*diff.hp, max:p.hp*diff.hp }));
+                  { hp:p.hp*scale, max:p.hp*scale }));
   boss = {
-    def, x:W/2, y:-170, tx:W/2, ty:(def.y||.2)*H, r:def.r, t:0, flash:0, phase:1,
-    hp:def.hp*diff.hp, max:def.hp*diff.hp, spin:0, timers:{}, vars:{}, parts
+    def, x:W/2, y:-170, tx:W/2, ty:(def.y||.2)*H, r:def.r, t:0, flash:0, phase:1, phaseT:0,
+    gates: def.phaseAt || DEFAULT_PHASES,
+    hp:def.hp*scale, max:def.hp*scale, spin:0, timers:{}, vars:{}, parts
   };
   if (def.init) def.init(boss);
   bossMaxHP = boss.max + parts.reduce((s,p)=>s+p.max,0);
@@ -1249,12 +1301,16 @@ function updateBoss(dt){
   b.y = lerp(b.y,b.ty,1-Math.pow(.96,dt*60));
   if (d.layout) d.layout(b,dt); else for (const p of b.parts) partPos(b,p);
 
-  /* phase gates — the flip snaps to the next musical beat (#10) so transitions land on the downbeat */
-  if (d.phaseAt){
-    const fr = b.hp/b.max;
-    let ph = 1;
-    for (let i=0;i<d.phaseAt.length;i++) if (fr <= d.phaseAt[i]) ph = i+2;
-    if (ph !== b.phase && beatTick){ b.phase = ph; flash=.35; Sound.alarm(); if (d.onPhase) d.onPhase(b,ph); }
+  /* phase gates — the flip snaps to the next musical beat (#10) so transitions land on the downbeat.
+     A phase also has to hold for PHASE_MIN before it can hand over, so no amount of
+     damage lets you skip a boss's choreography (#20). */
+  b.phaseT += dt;
+  if (b.phase <= b.gates.length){
+    /* hand over one phase at a time: the gate has to be reached *and* the phase
+       has to have had its say, then the flip lands on the downbeat */
+    if (b.hp/b.max <= b.gates[b.phase-1] + 1e-6 && b.phaseT >= PHASE_MIN && beatTick){
+      b.phase++; b.phaseT = 0; flash=.35; Sound.alarm(); if (d.onPhase) d.onPhase(b,b.phase);
+    }
   }
   /* beat-locked sniper accent (#8/#10) — a fast aimed shot on the bar cuts through slow curtains */
   if (beatTick && beatCount%4===0 && b.phase>=2 && P.alive)
@@ -1296,6 +1352,15 @@ function damageBoss(dmg,part){
     const guard = b.def.coreGuard ? b.def.coreGuard(b) : 0;
     if (guard >= 1){ b.flash=.3; if (Math.random()<.3) floatText(b.x,b.y-40,'SHIELDED',PAL.ebullet); updateBossBar(); return; }
     b.hp -= dmg*(1-guard); b.flash = 1;
+    /* a phase holds until it has played out — burst damage banks against the gate
+       rather than tearing through it (#20). The last phase has no gate below it,
+       so it holds on the clock alone. */
+    const gate = b.phase <= b.gates.length ? b.max*b.gates[b.phase-1]
+               : (b.phaseT < PHASE_MIN ? 1 : 0);
+    if (b.hp < gate){
+      b.hp = gate;
+      if (Math.random()<.15) floatText(b.x,b.y-40,'ARMOURED',PAL.ebullet);
+    }
   }
   updateBossBar();
   if (b.hp<=0) killBoss();
@@ -1872,7 +1937,7 @@ const RELICS = [
 let dmgMul = 1, pierceBonus = 0;
 function relicName(k){ const r=RELICS.find(x=>x.k===k); return r?r.n:k; }
 function ascend(){
-  MODMAX.power=8; MODMAX.spread=5; MODMAX.rapid=5; MODMAX.homing=4; MODMAX.pierce=4; MODMAX.drones=4;
+  MODMAX.power=6; MODMAX.spread=3; MODMAX.rapid=3; MODMAX.homing=4; MODMAX.pierce=4; MODMAX.drones=4;
 }
 function relicTick(dt){
   const R = P.relics||{};
@@ -3826,7 +3891,7 @@ function screenHelp(){
       <div class="grpLabel" style="margin-top:18px">Tools</div>
       <p><b>Bomb.</b> A shockwave expands from the ship: it sweeps every enemy bullet it passes — turning half into crystals — damages every enemy, boss part and ground target, and leaves you invulnerable ~2s. Save it for when you're cornered or a boss is about to flip phase. Bombs are limited; you find more and earn one each sector cleared.</p>
       <p><b>Shield.</b> A SHIELD pickup (and some relics) orbits your ship and soaks one hit before your lives are touched.</p>
-      <p><b>Upgrades.</b> Lettered pickups stack and persist across sectors: <b>PWR</b> damage, <b>SPR</b> extra shots, <b>RPD</b> fire rate, <b>HOM</b> homing missiles, <b>PRC</b> pierce, <b>DRN</b> drones.</p>
+      <p><b>Upgrades.</b> Lettered pickups stack and persist across sectors: <b>PWR</b> damage, <b>SPR</b> extra shots, <b>RPD</b> fire rate, <b>HOM</b> homing missiles, <b>PRC</b> pierce, <b>DRN</b> drones. A stripped hull still hits hard, and each further level of a mod is worth a little less than the last — the build is a climb, not a cliff. <b>SPR</b> is a genuine trade: a wider arc covers more sky, but each bolt in it lands softer, so a tight stream still out-damages a fan against one target.</p>
       <p><b>Drone formations.</b> With drones out, cycle <em>FWD</em> (tight forward arrow), <em>SIDE</em> (flank guard, wide coverage) and <em>TRACK</em> (orbit and fire at the nearest threat) — FORM pad, C, or gamepad Y.</p>
       <p><b>Wreck recovery.</b> Losing a life sheds just one upgrade — and it drops as a glowing <em>wreck</em>. You're briefly invulnerable on respawn: fly back over it to reclaim the level.</p>
       <p><b>Relics.</b> From sector seven on you're offered a permanent relic between sectors and your weapon caps come off — bigger builds than the early game allows.</p>
@@ -3844,6 +3909,7 @@ function screenHelp(){
       <div class="grpLabel" style="margin-top:18px">Difficulty &amp; flow</div>
       <p><b>Baseline.</b> Three difficulties — <em>Drift</em> (forgiving), <em>Arcade</em> (as tuned), <em>Void</em> (unkind) — plus a speed slider.</p>
       <p><b>Dynamic rank.</b> A hidden engine watches how you're flying: survive cleanly and aggressively and enemy fire quietly speeds up; take a hit and it eases off. On Void — or once you're flying well — patterns thicken into overlapping curtains rather than turning enemies into sponges. If a gap exists, there is always a way through.</p>
+      <p><b>Bosses answer your build.</b> Wardens and the heavier escorts are armoured against the loadout that actually arrives, so a late-run ship meets a fight worth having instead of deleting it — but only part-way, so gearing up always wins you time. Trash never scales: melting waves is what the build is <em>for</em>. And a boss holds each phase long enough to show it, so no amount of damage skips its choreography.</p>
 
       <div class="grpLabel" style="margin-top:18px">Your run</div>
       <p><b>Twelve sectors,</b> each with its own palette, roster, hazard, mid-boss and warden. A checkpoint sits right after each mid-boss — run out of lives past it and you can resume there.</p>
