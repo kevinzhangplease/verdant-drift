@@ -41,6 +41,11 @@
   #mult.hot{color:var(--amber);text-shadow:0 0 22px rgba(255,201,120,.75)}
   #chainBar{width:104px;height:3px;background:rgba(255,255,255,.12);margin-left:auto;margin-top:5px;border-radius:2px;overflow:hidden}
   #chainFill{height:100%;width:0;background:var(--jade);box-shadow:0 0 10px var(--jade)}
+  #breakBar{width:104px;height:4px;background:rgba(255,255,255,.12);margin-left:auto;margin-top:5px;border-radius:2px;overflow:hidden}
+  #breakFill{height:100%;width:0;background:linear-gradient(90deg,var(--jade),#a8f6ff);box-shadow:0 0 10px var(--jade);transition:width .08s}
+  #breakBar.full{box-shadow:0 0 16px rgba(142,255,232,.85)}
+  #breakBar.full #breakFill{background:#eafffb;animation:breakpulse .5s infinite}
+  @keyframes breakpulse{0%,100%{opacity:1}50%{opacity:.55}}
   #lifeRow{display:flex;gap:6px;margin-top:4px}
   .pip{width:9px;height:9px;border:1px solid var(--jade);transform:rotate(45deg);opacity:.35}
   .pip.on{background:var(--jade);opacity:1;box-shadow:0 0 10px var(--jade)}
@@ -158,6 +163,8 @@
       <div id="chainBar"><div id="chainFill"></div></div>
       <div class="stat" style="margin-top:10px">Cores</div>
       <div class="val small" id="cores">0</div>
+      <div class="stat" style="margin-top:10px">Break</div>
+      <div id="breakBar"><div id="breakFill"></div></div>
     </div>
   </div>
 </div>
@@ -535,7 +542,7 @@ function resetRun(startLevel){
   graze=0; grazeStreak=0; grazeMult=0; grazeTimer=0;
   P.lives = diff.lives; P.bombs = 2; P.shield = 0; P.inv = 2; P.alive = true;
   P.mods = { power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 };
-  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0;
+  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0;
   MODMAX.power=5; MODMAX.spread=3; MODMAX.rapid=3; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
   if (startLevel >= 6) ascend();
   /* later sectors start you geared up — they're balanced for it */
@@ -583,15 +590,18 @@ function updatePlayer(dt){
   P.x = P.tx; P.y = P.ty;                    /* follow the finger / mouse exactly — no lag */
   P.tilt = lerp(P.tilt, clamp((P.x-prevx)*.06,-.5,.5), .3);
   P.inv = Math.max(0,P.inv-dt);
+  if (P.morphT>0) P.morphT = Math.max(0, P.morphT - dt);
   P.thrust = (P.thrust + dt*22)%100;
 
   const m = P.mods;
+  const mor = clamp(P.morphT||0, 0, 1);              /* proximity morph 0..1 (#11) */
   const rate = (0.135 - m.rapid*0.017)*(P.focus?.92:1);
   P.fireT -= dt;
   if (P.fireT<=0 && P.alive){
     P.fireT = rate;
-    const dmg = 1 + m.power*.55, n = 1+m.spread;
-    const arc = (P.focus?.07:.13)*(n-1);
+    const dmg = (1 + m.power*.55)*(1 + mor*.3);       /* grazing morphs the cannon heavier... */
+    const n = 1 + m.spread + Math.round(mor*2);        /* ...and wider */
+    const arc = (P.focus?.07:.13)*Math.max(0,n-1);
     for (let i=0;i<n;i++){
       const a = -Math.PI/2 + (n===1?0:(-arc/2 + arc*i/(n-1)));
       shoot(P.x,P.y-14,a,760,dmg,m.pierce);
@@ -961,7 +971,10 @@ function killEnemy(e,silent){
       f.vx = (k?1:-1)*90; f.vy = 40;
     }
   }
-  const n = e.type==='shoal' ? 1 : rint(2,4);
+  /* Break (#9): a close kill charges the meter; while in Break, kills spill extra gold */
+  if (P.alive && P.odT<=0 && dist2(e.x,e.y,P.x,P.y) < 150*150) P.od = Math.min(1,(P.od||0)+.05);
+  let n = e.type==='shoal' ? 1 : rint(2,4);
+  if (P.odT>0) n += 2;
   for (let k=0;k<n;k++) dropPickup(e.x+rnd(-14,14), e.y+rnd(-10,10), 'crystal');
   if (e.drop) dropPickup(e.x,e.y,e.drop);
   else if (Math.random() < (T.r>18?.16:.06)) dropPickup(e.x,e.y,rollMod());
@@ -1630,23 +1643,28 @@ function relicTick(dt){
     if (P.bulwarkT >= 20){ P.bulwarkT = 0;
       if (P.shield < P.shieldMax){ P.shield++; floatText(P.x,P.y-26,'BULWARK',PAL.hull); refreshHUD(true); } }
   }
-  /* Overdrive — hold a full chain and the ship boils over */
+  /* Break (#9) — graze and close kills charge the meter; when full, the ship boils over
+     into a screen-melting overdrive. Charging happens in onGraze / killEnemy. */
   if (P.odT > 0){
     P.odT -= dt;
-    P.fireT -= dt*1.1;
-    if (Math.random() < dt*70)
-      parts.push({ x:P.x+rnd(-16,16), y:P.y+rnd(-14,14), vx:rnd(-40,40), vy:rnd(60,180),
-                   life:.4, max:.4, r:rnd(1.6,4), c:PAL.crystal, g:0 });
-    if (P.odT <= 0) floatText(P.x,P.y-30,'OVERDRIVE OUT',PAL.dim||PAL.hull);
-  } else if (mult >= 8){
-    P.od = (P.od||0) + dt*(R.surge?.5:.25);
-    if (P.od >= 1){ P.od = 0; P.odT = R.surge?7:5;
-      whiteout = Math.max(whiteout,.2); shake = Math.max(shake,10);
-      floatText(P.x,P.y-34,'OVERDRIVE',PAL.crystal); Sound.alarm(); }
-  } else P.od = Math.max(0,(P.od||0)-dt*.12);
+    P.fireT -= dt*1.6;                                 /* far faster fire while broken */
+    if (Math.random() < dt*95)
+      pPart({ x:P.x+rnd(-18,18), y:P.y+rnd(-16,16), vx:rnd(-50,50), vy:rnd(70,200),
+              life:.45, r:rnd(1.6,4.2), c:PAL.bolt, g:0 });
+    if (P.odT <= 0) floatText(P.x,P.y-30,'BREAK OUT',PAL.hull);
+  } else if (P.od >= 1){
+    P.od = 0; P.odT = R.surge?8:6;
+    whiteout = Math.max(whiteout,.2); shake = Math.max(shake,12);
+    floatText(P.x,P.y-34,'BREAK',PAL.bolt); Sound.alarm(); haptic([0,45,30,70]);
+  } else P.od = Math.max(0,(P.od||0) - dt*.05);         /* slow bleed if you stop pressing the aggression */
 
-  dmgMul = 1 + (P.odT>0?.6:0) + (R.lens && P.focus ? .4 : 0) + (R.bore?.15:0);
+  dmgMul = 1 + (P.odT>0?.8:0) + (R.lens && P.focus ? .4 : 0) + (R.bore?.15:0);
   pierceBonus = (R.bore?1:0) + (P.odT>0?1:0);
+
+  if (elBreakFill){
+    elBreakFill.style.width = (P.odT>0 ? 100 : (P.od||0)*100) + '%';
+    elBreakBar.classList.toggle('full', P.odT>0);
+  }
 }
 
 const HAZARDS = {
@@ -2717,6 +2735,10 @@ function onGraze(b){
   grazeMult = clamp(Math.floor(grazeStreak/10), 0, 8);
   recalcMult();
   score += 2*mult;
+  /* proximity aura (#11): active grazing morphs the cannon wider & heavier */
+  P.morphT = Math.min(1.2, (P.morphT||0) + .5);
+  /* Break (#9): graze charges the meter (Overcharge relic fills faster) */
+  if (P.odT<=0) P.od = Math.min(1, (P.od||0) + ((P.relics&&P.relics.surge)?.03:.015));
   spark(b.x,b.y,PAL.crystal);
   if (grazeStreak % 10 === 0){ Sound.chime(clamp(grazeStreak/10+3,0,11));
     floatText(P.x,P.y-30,'GRAZE ×'+grazeMult,PAL.crystal); popMult(); haptic(8); refreshHUD(); }
@@ -3033,6 +3055,14 @@ function drawShip(){
       ctx.beginPath(); ctx.arc(P.x+Math.cos(a)*26*pulse,P.y+Math.sin(a)*26*pulse,2.6,0,TAU); ctx.fill(); }
     ctx.restore(); addGlow(P.x,P.y,44,PAL.hull,.25);
   }
+  if ((P.morphT||0)>0){
+    /* proximity aura (#11) — grazing lights a cool ring; the wider the morph, the brighter */
+    const a = clamp(P.morphT,0,1);
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.strokeStyle=rgba(PAL.bolt,.12+a*.24); ctx.lineWidth=1.4+a*1.8;
+    ctx.beginPath(); ctx.arc(P.x,P.y,GRAZE_R+P.r+2+Math.sin(elapsed*10)*1.5,0,TAU); ctx.stroke();
+    ctx.restore(); addGlow(P.x,P.y,GRAZE_R+10,PAL.bolt,.2+a*.3);
+  }
   if (P.focus){
     ctx.save(); ctx.globalCompositeOperation='lighter';
     ctx.fillStyle=rgba(PAL.crystal,.95); ctx.beginPath(); ctx.arc(P.x,P.y,P.r,0,TAU); ctx.fill();
@@ -3347,7 +3377,8 @@ const elScore=$('score'), elMult=$('mult'), elCores=$('cores'), elLife=$('lifeRo
       elChain=$('chainFill'), elHud=$('hud'), elPads=$('pads'), elBanner=$('banner'), elBT=$('bTitle'),
       elBS=$('bSub'), elBossWrap=$('bossWrap'), elBossName=$('bossName'), elBossFill=$('bossFill'),
       elVeil=$('veil'), elPadBomb=$('padBomb'), elPadFocus=$('padFocus'), elSound=$('sound'),
-      elPause=$('pause'), elSectorTag=$('sectorTag'), elTeach=$('teach');
+      elPause=$('pause'), elSectorTag=$('sectorTag'), elTeach=$('teach'),
+      elBreakFill=$('breakFill'), elBreakBar=$('breakBar');
 
 let hudSig = '';
 function refreshHUD(force){
@@ -3496,7 +3527,8 @@ function screenHelp(){
       <p><b>Chain.</b> Every kill drops crystals. Collect eight without a pause and your multiplier climbs, up to ×8. Let the timer lapse and it resets.</p>
       <p><b>Bomb.</b> <em>Tap BOMB</em> to release a shockwave that expands from your ship. It wipes every enemy bullet it passes — turning half of them into crystals — damages everything on screen, and leaves you invulnerable for about two seconds. Use it when you're cornered, or right before a boss phase change.</p>
       <p><b>Focus.</b> Hold FOCUS to halve your speed, narrow your shot spread, and reveal your real hitbox — a dot far smaller than the ship. This is how you thread dense patterns.</p>
-      <p><b>Graze.</b> Skim past enemy fire without being hit and your multiplier climbs beyond ×8, up to <em>×16</em>. The tiny hitbox is a weapon — the closer you fly, the faster you score.</p>
+      <p><b>Graze.</b> Skim past enemy fire without being hit and your multiplier climbs beyond ×8, up to <em>×16</em>. The tiny hitbox is a weapon — the closer you fly, the faster you score. Sustained grazing also <em>morphs your cannon</em> wider and heavier for a moment.</p>
+      <p><b>Break.</b> Grazing and close-range kills fill the <em>Break</em> meter. When it tops out, your ship boils over — fire rate and damage surge, and every kill spills extra crystals. Stay aggressive to earn it.</p>
       <p><b>Upgrades.</b> Lettered pickups stack: PWR damage, SPR shots, RPD fire rate, HOM missiles, PRC pierce, DRN drones. They persist across sectors. Losing a life costs you exactly one upgrade step, never the whole build.</p>
       <p><b>Checkpoints.</b> Each sector has one, right after the mid-boss. Run out of lives after it and you can resume there.</p>
     </div>
