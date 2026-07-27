@@ -92,6 +92,9 @@
   .pad.empty{opacity:.32}
   .pad.deny{animation:deny .3s}
   @keyframes deny{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+  #padForm{width:60px;height:60px;display:none}
+  #padForm.show{display:flex}
+  #padForm b{font-size:12px;letter-spacing:.04em}
   .pad.ready{box-shadow:0 0 0 0 rgba(255,201,120,.55);animation:ready 1.8s infinite}
   @keyframes ready{0%{box-shadow:0 0 0 0 rgba(255,201,120,.45)}70%{box-shadow:0 0 0 14px rgba(255,201,120,0)}100%{box-shadow:0 0 0 0 rgba(255,201,120,0)}}
 
@@ -175,6 +178,7 @@
 
 <div id="pads">
   <div class="pad" id="padBomb"><b>2</b>Bomb</div>
+  <div class="pad" id="padForm"><b>FWD</b>Form</div>
   <div class="pad" id="padFocus"><b>◎</b><span id="focusLbl">Focus</span></div>
 </div>
 
@@ -220,7 +224,7 @@ function pPart(o){ const p = partPool.length ? partPool.pop() : {};
   p.r=o.r; p.c=o.c; p.g=o.g||0; p.ring=o.ring||false; parts.push(p); return p; }
 
 /* --- player settings + saved progress (localStorage) --- */
-const Settings = { shake:1, flash:1, safeFlash:false, colorblind:false, haptics:true, hitbox:true, quality:'auto' };
+const Settings = { shake:1, flash:1, safeFlash:false, colorblind:false, haptics:true, hitbox:true, focusSlow:false, quality:'auto' };
 let Best = { hi:0, furthest:1, sectors:{}, daily:{}, launches:0 };
 const SAVE_KEY = 'verdantDrift.v1';
 function loadSave(){
@@ -530,6 +534,7 @@ const P = {
 };
 const MODMAX  = { power:5, spread:3, homing:2, pierce:2, drones:2, rapid:3 };
 const MODNAME = { power:'PWR', spread:'SPR', homing:'HOM', pierce:'PRC', drones:'DRN', rapid:'RPD' };
+const DRONE_FORMS = ['FWD','SIDE','TRACK'];   /* drone formation labels (#17) */
 
 function clearField(){
   enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[];
@@ -542,7 +547,7 @@ function resetRun(startLevel){
   graze=0; grazeStreak=0; grazeMult=0; grazeTimer=0;
   P.lives = diff.lives; P.bombs = 2; P.shield = 0; P.inv = 2; P.alive = true;
   P.mods = { power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 };
-  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0;
+  P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0; P.droneForm = 0;
   MODMAX.power=5; MODMAX.spread=3; MODMAX.rapid=3; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
   if (startLevel >= 6) ascend();
   /* later sectors start you geared up — they're balanced for it */
@@ -576,7 +581,17 @@ function startLevelAt(i){
 function syncDrones(){
   drones.length = 0;
   const nDr = P.mods.drones + ((P.relics&&P.relics.twin)?2:0);
-  for (let i=0;i<nDr;i++) drones.push({ a:i/Math.max(1,nDr)*TAU, fireT:i*.12 });
+  for (let i=0;i<nDr;i++) drones.push({ a:i/Math.max(1,nDr)*TAU, fireT:i*.12, ox:0, oy:0, x:P.x, y:P.y, drawA:-Math.PI/2 });
+  if (elPadForm){
+    elPadForm.classList.toggle('show', drones.length>0);
+    elPadForm.querySelector('b').textContent = DRONE_FORMS[P.droneForm||0];
+  }
+}
+function cycleForm(){
+  if (!drones.length) return;
+  P.droneForm = ((P.droneForm||0)+1)%3;
+  if (elPadForm) elPadForm.querySelector('b').textContent = DRONE_FORMS[P.droneForm];
+  floatText(P.x,P.y-30, DRONE_FORMS[P.droneForm], PAL.drone); Sound.pickup();
 }
 function updatePlayer(dt){
   relicTick(dt);
@@ -587,7 +602,10 @@ function updatePlayer(dt){
     P.tx += Math.cos(a)*pullField*dt; P.ty += Math.sin(a)*pullField*dt;
   }
   P.tx = clamp(P.tx,14,W-14); P.ty = clamp(P.ty,40,H-30);
-  P.x = P.tx; P.y = P.ty;                    /* follow the finger / mouse exactly — no lag */
+  if (Settings.focusSlow && P.focus){         /* opt-in precision (#12): ease toward the cursor while focusing */
+    const e = 1-Math.pow(1-.5, dt*60);
+    P.x = lerp(P.x, P.tx, e); P.y = lerp(P.y, P.ty, e);
+  } else { P.x = P.tx; P.y = P.ty; }          /* otherwise follow exactly — no lag */
   P.tilt = lerp(P.tilt, clamp((P.x-prevx)*.06,-.5,.5), .3);
   P.inv = Math.max(0,P.inv-dt);
   if (P.morphT>0) P.morphT = Math.max(0, P.morphT - dt);
@@ -600,8 +618,9 @@ function updatePlayer(dt){
   if (P.fireT<=0 && P.alive){
     P.fireT = rate;
     const dmg = (1 + m.power*.55)*(1 + mor*.3);       /* grazing morphs the cannon heavier... */
-    const n = 1 + m.spread + Math.round(mor*2);        /* ...and wider */
-    const arc = (P.focus?.07:.13)*Math.max(0,n-1);
+    const morShots = P.focus ? 0 : Math.round(mor*2);  /* ...and wider — but Focus keeps it a tight stream (#12) */
+    const n = 1 + m.spread + morShots;
+    const arc = (P.focus?.05:.13)*Math.max(0,n-1);
     for (let i=0;i<n;i++){
       const a = -Math.PI/2 + (n===1?0:(-arc/2 + arc*i/(n-1)));
       shoot(P.x,P.y-14,a,760,dmg,m.pierce);
@@ -621,9 +640,32 @@ function updatePlayer(dt){
                         dmg:2.4+m.power*.3, pierce:0, homing:true, life:3, trail:0 });
     }
   }
-  for (const d of drones){
-    d.a += dt*1.5; d.fireT -= dt;
-    if (d.fireT<=0){ d.fireT=.3; shoot(P.x+Math.cos(d.a)*38, P.y+Math.sin(d.a)*38, -Math.PI/2, 640, 1.1, 0); }
+  const nd = drones.length;
+  for (let i=0;i<nd;i++){
+    const d = drones[i];
+    let ox, oy, fireA = -Math.PI/2;
+    if (P.droneForm===1){                       /* SIDE — flank guard, wide screen coverage */
+      const side = (i%2)?1:-1, rank = Math.floor(i/2);
+      ox = side*(34+rank*15); oy = -2 - rank*8;
+    } else if (P.droneForm===2){                /* TRACK — orbit and fire at the nearest threat */
+      d.a += dt*1.6; ox = Math.cos(d.a)*42; oy = Math.sin(d.a)*42; fireA = null;
+    } else {                                     /* FWD — tight forward arrow, concentrated fire */
+      const c = (nd-1)/2;
+      ox = (i-c)*15; oy = -22 - Math.abs(i-c)*11;
+    }
+    const k = 1-Math.pow(1-0.25, dt*60);
+    d.ox = lerp(d.ox||0, ox, k); d.oy = lerp(d.oy||0, oy, k);
+    d.x = P.x + d.ox; d.y = P.y + d.oy;
+    let aim = fireA;
+    if (aim===null){
+      let best=null, bd=1e9;
+      for (const e of enemies){ const dd=dist2(d.x,d.y,e.x,e.y); if (dd<bd){ bd=dd; best=e; } }
+      if (boss){ const dd=dist2(d.x,d.y,boss.x,boss.y); if (dd<bd){ bd=dd; best=boss; } }
+      aim = best ? Math.atan2(best.y-d.y,best.x-d.x) : -Math.PI/2;
+    }
+    d.drawA = aim;
+    d.fireT -= dt;
+    if (d.fireT<=0){ d.fireT=.3; shoot(d.x, d.y, aim, 640, 1.1, 0); }
   }
 }
 function shoot(x,y,a,sp,dmg,pierce){ dmg*=dmgMul; pierce+=pierceBonus;
@@ -639,9 +681,13 @@ function hurtPlayer(){
   P.inv=2.2; shake=26; flash=.7; Sound.boom(1.3); Sound.hurt();
   burst(P.x,P.y,54,PAL.hull,320);
   chain=0; grazeStreak=0; grazeMult=0; grazeTimer=0; mult=1;
+  P.od=0; P.morphT=0;                          /* Break charge & morph are lost on a hit */
   haptic([0,45,25,45]);
   const owned = Object.keys(P.mods).filter(k=>P.mods[k]>0);
-  if (owned.length) P.mods[pick(owned)]--;
+  if (owned.length){
+    const lost = pick(owned); P.mods[lost]--;
+    if (P.lives>0) spawnWreck(P.x, P.y, lost);   /* reclaim it before it drifts away (#19) */
+  }
   syncDrones();
   for (let i=ebullets.length-1;i>=0;i--)
     if (dist2(ebullets[i].x,ebullets[i].y,P.x,P.y) < 180*180){ spark(ebullets[i].x,ebullets[i].y,PAL.ebullet); ebullets.splice(i,1); }
@@ -2704,6 +2750,9 @@ function loadCheckpoint(){
 function dropPickup(x,y,kind){
   pickups.push({ x, y, vx:rnd(-40,40), vy:rnd(-70,-20), kind, t:0, r:kind==='crystal'?9:15, mag:false });
 }
+function spawnWreck(x,y,mod){
+  pickups.push({ x, y, vx:rnd(-30,30), vy:rnd(-40,-10), kind:'wreck', mod, t:0, r:16, mag:false });
+}
 function collectPickup(p){
   if (p.kind==='crystal'){
     chain++; chainTimer = 2.6;
@@ -2717,12 +2766,19 @@ function collectPickup(p){
     P.bombs = Math.min(5,P.bombs+1);
     floatText(p.x,p.y,'BOMB',PAL.missile); Sound.pickup();
     teach('bomb','You have bombs. Tap <b>BOMB</b> for a shockwave that wipes enemy fire into crystals.');
+  } else if (p.kind==='wreck'){
+    /* reclaim the upgrade you shed when you were hit (#19), plus a little Break back */
+    if (p.mod && P.mods[p.mod] < MODMAX[p.mod]){ P.mods[p.mod]++; if (p.mod==='drones') syncDrones(); }
+    P.od = Math.min(1,(P.od||0)+.3);
+    floatText(p.x,p.y,'RECLAIMED',PAL.missile); Sound.pickup(); haptic(20); refreshHUD(true);
   } else {
     const m = P.mods;
     if (m[p.kind] < MODMAX[p.kind]){
       m[p.kind]++;
       floatText(p.x,p.y, MODNAME[p.kind]+' '+m[p.kind], PAL.pickup);
-      if (p.kind==='drones') syncDrones();
+      if (p.kind==='drones'){ syncDrones();
+        teach('form', DESKTOP?'Drones online — press <b>C</b> to change their formation.'
+                             :'Drones online — tap <b>FORM</b> to change their formation.'); }
     } else { addScore(500,p.x,p.y); floatText(p.x,p.y,'+500',PAL.crystal); }
     Sound.pickup();
   }
@@ -3076,8 +3132,8 @@ function drawShip(){
     ctx.restore();
   }
   for (const d of drones){
-    const dx=P.x+Math.cos(d.a)*38, dy=P.y+Math.sin(d.a)*38;
-    ctx.save(); ctx.translate(dx,dy); ctx.rotate(d.a);
+    const dx=d.x, dy=d.y, ang=(d.drawA===undefined?-Math.PI/2:d.drawA);
+    ctx.save(); ctx.translate(dx,dy); ctx.rotate(ang);
     ctx.fillStyle=rgba(PAL.drone,.9);
     ctx.beginPath(); ctx.moveTo(6,0); ctx.lineTo(-4,4); ctx.lineTo(-2,0); ctx.lineTo(-4,-4); ctx.closePath(); ctx.fill();
     ctx.restore(); addGlow(dx,dy,14,PAL.drone,.6);
@@ -3304,7 +3360,19 @@ function drawEnemyBullets(){
 function drawPickups(){
   ctx.globalCompositeOperation='lighter';
   for (const p of pickups){
-    if (p.kind==='crystal'){
+    if (p.kind==='wreck'){
+      const pl = .6+Math.sin(p.t*8)*.4;
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(Math.sin(p.t*4)*.3);
+      ctx.strokeStyle=rgba(PAL.missile,.95); ctx.lineWidth=2.4;
+      ctx.beginPath();
+      for (let i=0;i<6;i++){ const a=i/6*TAU, rr=(15+pl*3)*(i%2?.62:1), x=Math.cos(a)*rr, y=Math.sin(a)*rr; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+      ctx.closePath(); ctx.stroke();
+      ctx.fillStyle=rgba(PAL.missile,.2); ctx.fill();
+      ctx.fillStyle=rgba(PAL.missile,.98); ctx.font='600 11px ui-monospace,monospace';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(p.mod?MODNAME[p.mod][0]:'!',0,.5);
+      ctx.restore(); addGlow(p.x,p.y,30,PAL.missile,.6+pl*.2);
+    } else if (p.kind==='crystal'){
       ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.t*2.4);
       ctx.fillStyle=rgba(PAL.crystal,.95);
       ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(4.5,0); ctx.lineTo(0,7); ctx.lineTo(-4.5,0); ctx.closePath(); ctx.fill();
@@ -3378,7 +3446,7 @@ const elScore=$('score'), elMult=$('mult'), elCores=$('cores'), elLife=$('lifeRo
       elBS=$('bSub'), elBossWrap=$('bossWrap'), elBossName=$('bossName'), elBossFill=$('bossFill'),
       elVeil=$('veil'), elPadBomb=$('padBomb'), elPadFocus=$('padFocus'), elSound=$('sound'),
       elPause=$('pause'), elSectorTag=$('sectorTag'), elTeach=$('teach'),
-      elBreakFill=$('breakFill'), elBreakBar=$('breakBar');
+      elBreakFill=$('breakFill'), elBreakBar=$('breakBar'), elPadForm=$('padForm');
 
 let hudSig = '';
 function refreshHUD(force){
@@ -3495,6 +3563,7 @@ function screenSettings(){
     ['colorblind','Colorblind cue','Bolder outlines + white cores on enemy fire'],
     ['safeFlash','Reduce flashes','Softens full-screen flash & whiteout'],
     ['hitbox','Show hitbox','A faint dot marks your true hitbox'],
+    ['focusSlow','Focus slows ship','Ease toward the cursor while focusing, for finer aim'],
     ['haptics','Haptics','Vibrate on hits and bombs (mobile)']
   ];
   elVeil.classList.remove('off');
@@ -3529,7 +3598,7 @@ function screenHelp(){
       <p><b>Focus.</b> Hold FOCUS to halve your speed, narrow your shot spread, and reveal your real hitbox — a dot far smaller than the ship. This is how you thread dense patterns.</p>
       <p><b>Graze.</b> Skim past enemy fire without being hit and your multiplier climbs beyond ×8, up to <em>×16</em>. The tiny hitbox is a weapon — the closer you fly, the faster you score. Sustained grazing also <em>morphs your cannon</em> wider and heavier for a moment.</p>
       <p><b>Break.</b> Grazing and close-range kills fill the <em>Break</em> meter. When it tops out, your ship boils over — fire rate and damage surge, and every kill spills extra crystals. Stay aggressive to earn it.</p>
-      <p><b>Upgrades.</b> Lettered pickups stack: PWR damage, SPR shots, RPD fire rate, HOM missiles, PRC pierce, DRN drones. They persist across sectors. Losing a life costs you exactly one upgrade step, never the whole build.</p>
+      <p><b>Upgrades &amp; drones.</b> Lettered pickups stack: PWR damage, SPR shots, RPD fire rate, HOM missiles, PRC pierce, DRN drones. Cycle drones between <em>FWD / SIDE / TRACK</em> with the FORM pad (or <em>C</em> / gamepad Y). Losing a life sheds one upgrade — but it drops as a <em>wreck</em> you can fly back over to reclaim.</p>
       <p><b>Checkpoints.</b> Each sector has one, right after the mid-boss. Run out of lives after it and you can resume there.</p>
     </div>
     <div class="btnRow"><button class="btn" id="back">Back</button></div>`;
@@ -3711,6 +3780,7 @@ function bindPad(el,onDown,onUp){
   el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up); el.addEventListener('pointerleave',up);
 }
 bindPad(elPadBomb, useBomb);
+bindPad(elPadForm, cycleForm);
 bindPad(elPadFocus, ()=>{ focusTouch=true; updateFocus(); }, ()=>{ focusTouch=false; updateFocus(); });
 
 elSound.addEventListener('click', ()=>{
@@ -3726,6 +3796,7 @@ addEventListener('keydown', e=>{
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].indexOf(e.key)>=0) e.preventDefault();
   keys[e.key.toLowerCase()] = true;
   if (e.key===' ' || e.key.toLowerCase()==='z') useBomb();
+  if (e.key.toLowerCase()==='c' && !e.repeat) cycleForm();
   if (e.key==='Escape'||e.key==='p') togglePause();
   if (e.key==='Shift' || e.key.toLowerCase()==='x'){ focusKey = true; updateFocus(); }
   Sound.resume();
@@ -3744,6 +3815,7 @@ function pollGamepad(){
   const fp = down(4) || down(6) || down(2);          /* L1 / L2 / X → focus */
   if (fp !== focusPad){ focusPad = fp; updateFocus(); }
   if (edge(0) || edge(5) || edge(7)) useBomb();       /* A / R1 / R2 → bomb */
+  if (edge(3)) cycleForm();                            /* Y → cycle drone formation */
   if (edge(9)) togglePause();                          /* Start → pause */
   Sound.resume();
   if (state==='playing'){
