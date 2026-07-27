@@ -1,0 +1,14 @@
+{
+  "name": "Verdant Drift — Twelve Sectors",
+  "short_name": "Verdant Drift",
+  "description": "An arcade vertical shooter across twelve palette-shifting sectors. Cool player fire, hot enemy fire, always legible.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#04070f",
+  "theme_color": "#04070f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
