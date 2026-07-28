@@ -495,7 +495,10 @@ function sprite(key, w, h, paint){
   return c;
 }
 function blitSprite(c, x, y, w, h, rot){
-  /* force source-over: several draw paths set 'lighter' for their own glow effects, and an
+  /* Pass the size the sprite was BAKED at. Blitting smaller resamples the whole bitmap every
+     frame -- the enemy roster ran at roughly double space's draw cost until the two matched,
+     which is the opposite of what a sprite cache is for.
+     Force source-over: several draw paths set 'lighter' for their own glow effects, and an
      additively-blended sprite blows straight out to white */
   ctx.save(); ctx.globalCompositeOperation='source-over';
   ctx.translate(x,y); if (rot) ctx.rotate(rot);
@@ -907,6 +910,486 @@ ART.picnic.hazard = {
       addGlow(k.x,k.y,k.len*.4,PAL.elaser,.22);
     }
   }}
+};
+
+/* ---- picnic: the common enemies ------------------------------------------------
+   The roster had to be rechosen. The original mapping (cherry tomato, prawn, lobster,
+   lemon slice) was written before picnic committed to a hard cool band, and every one of
+   those foods is red, orange or yellow — the player's band. A blue hot dog is not a
+   solution; picking food that is *naturally* cool is. Hence blueberries, blue corn, red
+   cabbage, blue cheese, grapes, mussels, artichoke, red onion and poppy seed: all real,
+   all cool, none of them a recolour fighting its own subject.
+
+   Geometry is untouched. Each food is drawn at the radius its type declares, keeps the
+   rotation cue the space art used, and keeps every element that carries information —
+   HP arcs, shield rings, the lancer's aim blink, the angler's lure, the blinker's fade.
+
+   Bodies are baked into the sprite cache once and blitted; only the moving parts and the
+   hit flash are per-frame. */
+function foodHit(e, r){
+  if (!(e.flash>0)) return;
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  const g = ctx.createRadialGradient(0,0,0,0,0,r*1.15);
+  g.addColorStop(0,'rgba(255,255,255,'+Math.min(.85,e.flash*.9)+')');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,r*1.15,0,TAU); ctx.fill();
+  ctx.restore();
+}
+/* the HP arc and the shield ring are gameplay readouts, not decoration — same radii,
+   same sweep, in both skins */
+function foodHpArc(e, r){
+  ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,0,r,-Math.PI/2,-Math.PI/2+TAU*(e.hp/e.maxhp)); ctx.stroke();
+}
+/* a berry: the body plus its little five-point crown, used at three sizes */
+function berry(g, r, crown){
+  softShadow(g, r);
+  g.beginPath(); g.ellipse(0,0,r,r*.94,0,0,TAU);
+  roundBody(g, r, PAL.foe, PAL.foeDark); g.fill();
+  if (crown){
+    g.beginPath();
+    for (let i=0;i<5;i++){ const a=i/5*TAU-Math.PI/2, rr=r*.34;
+      g.lineTo(Math.cos(a)*rr, Math.sin(a)*rr - r*.62);
+      g.lineTo(Math.cos(a+.63)*rr*.4, Math.sin(a+.63)*rr*.4 - r*.62); }
+    g.closePath();
+    g.fillStyle=rgba(PAL.foeDark,.9); g.fill();
+    g.beginPath(); g.arc(0,-r*.62,r*.16,0,TAU); g.fillStyle=rgba(PAL.elaser,.9); g.fill();
+  }
+  gloss(g, r, .55);
+}
+
+ART.picnic.enemy = {
+
+  /* drifter · blueberry */
+  drifter(e){
+    ctx.rotate(Math.sin(e.t*1.2)*.2);
+    blitSprite(sprite('blueberry', 44, 44, g=>berry(g, 15, true)), 0, 0, 44, 44, 0);
+    foodHit(e, 15);
+    addGlow(e.x,e.y,20,PAL.foe,.45+e.flash*.5);
+  },
+
+  /* weaver · blue corn tortilla chip */
+  weaver(e){
+    ctx.rotate(Math.PI+Math.sin(e.t*2)*.3);
+    blitSprite(sprite('chip', 48, 48, g=>{
+      softShadow(g, 15);
+      g.beginPath();
+      g.moveTo(0,-15); g.quadraticCurveTo(9,-6, 14,9);
+      g.quadraticCurveTo(0,13, -14,9); g.quadraticCurveTo(-9,-6, 0,-15);
+      g.closePath();
+      roundBody(g, 15, PAL.foe, PAL.foeDark); g.fill(); outline(g,.4);
+      /* salt */
+      g.fillStyle='rgba(255,255,255,.55)';
+      for (const s of [[-5,2],[4,-2],[0,6],[7,4],[-8,6]]){
+        g.beginPath(); g.arc(s[0],s[1],1.1,0,TAU); g.fill(); }
+      gloss(g, 13, .4);
+    }), 0, 0, 48, 48, 0);
+    foodHit(e, 15);
+    addGlow(e.x,e.y,20,PAL.foe,.4+e.flash*.5);
+  },
+
+  /* lancer · a purple carrot. This was drawn as a lavender sprig first, but stacked tapering
+     ellipses with a leafy crown read as a root vegetable no matter what they are called — and
+     a carrot is the better object anyway: it is already a spike, and it dives point-first
+     exactly as the dart did. Purple carrots are real, which is what keeps it inside the band. */
+  lancer(e){
+    ctx.rotate(e.state==='dive'?Math.atan2(e.vy,e.vx)+Math.PI/2:Math.PI);
+    blitSprite(sprite('carrot', 44, 52, g=>{
+      softShadow(g, 12);
+      /* the tops. Low and small: level with the body they read as a dark cross sitting on
+         the vegetable once the idle rotation flips the sprite */
+      g.strokeStyle=rgba(PAL.foeDark,.85); g.lineWidth=1.6;
+      for (const s of [-1,0,1]){
+        g.beginPath(); g.moveTo(0,13);
+        g.quadraticCurveTo(s*4,19, s*6.5,23); g.stroke();
+        g.beginPath(); g.ellipse(s*6.5,23,2.6,1.6,s*.6,0,TAU);
+        g.fillStyle=rgba(PAL.foeDark,.7); g.fill();
+      }
+      /* the root: stacked rings, fattest at the shoulder, tapering to the tip */
+      for (let i=0;i<9;i++){
+        const y = 13 - i*4.1;
+        const w = 8.6 - i*.85;
+        g.beginPath(); g.ellipse(0, y, Math.max(w,1.1), 3.0, 0, 0, TAU);
+        g.fillStyle=rgba(i%2?PAL.foe:PAL.elaser,.96); g.fill();
+      }
+      /* the shoulder, so the top of the root is one solid form rather than a stack of discs */
+      g.beginPath(); g.ellipse(0,12,8.6,3.4,0,0,TAU);
+      roundBody(g, 9, PAL.foe, PAL.foeDark); g.fill();
+      gloss(g, 10, .35);
+    }), 0, 0, 44, 52, 0);
+    /* the aim blink is the tell — it must survive the reskin unchanged */
+    if (e.state==='aim' && Math.floor(e.t*12)%2){
+      ctx.beginPath(); ctx.arc(0,-8,7,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.8); ctx.fill();
+    }
+    foodHit(e, 13);
+    addGlow(e.x,e.y,18,e.state==='dive'?PAL.elaser:PAL.foe,.5+e.flash*.5);
+  },
+
+  /* turret · a blueberry muffin, three berries where the gun ports were */
+  turret(e){
+    ctx.rotate(Math.sin(e.t*.7)*.25);
+    blitSprite(sprite('muffin', 60, 60, g=>{
+      softShadow(g, 20);
+      /* the case */
+      g.beginPath(); g.moveTo(-15,2); g.lineTo(15,2); g.lineTo(11,19); g.lineTo(-11,19); g.closePath();
+      g.fillStyle=rgba(PAL.foeDark,1); g.fill();
+      g.strokeStyle='rgba(255,255,255,.18)'; g.lineWidth=1.4;
+      for (let i=-3;i<=3;i++){ g.beginPath(); g.moveTo(i*4.4,2); g.lineTo(i*3.4,19); g.stroke(); }
+      /* the domed top */
+      g.beginPath(); g.moveTo(-19,3);
+      g.bezierCurveTo(-19,-18, 19,-18, 19,3); g.closePath();
+      roundBody(g, 19, PAL.foe, PAL.foeDark); g.fill(); outline(g,.35);
+      /* berries baked in */
+      g.fillStyle=rgba(PAL.elaser,.9);
+      for (const b of [[-8,-6],[3,-9],[9,-2],[-2,-2]]){
+        g.beginPath(); g.arc(b[0],b[1],2.6,0,TAU); g.fill(); }
+      gloss(g, 18, .5);
+    }), 0, 0, 60, 60, 0);
+    /* the three ports still point down, still where the shots come from */
+    ctx.fillStyle=rgba(PAL.ebullet,.85);
+    for (let i=-1;i<=1;i++){ ctx.beginPath(); ctx.arc(i*8,15,3,0,TAU); ctx.fill(); }
+    foodHit(e, 20);
+    foodHpArc(e, 24);
+    addGlow(e.x,e.y,28,PAL.foe,.45+e.flash*.5);
+  },
+
+  /* sentry · a sliced red cabbage — its rings were always concentric arcs */
+  sentry(e){
+    ctx.save(); ctx.rotate(e.ang);
+    for (let i=0;i<3;i++){ ctx.rotate(TAU/3);
+      ctx.beginPath(); ctx.arc(0,0,24,-.4,.4); ctx.lineWidth=4;
+      ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.8); ctx.stroke(); }
+    ctx.restore();
+    blitSprite(sprite('cabbage', 52, 52, g=>{
+      softShadow(g, 17);
+      g.beginPath(); g.ellipse(0,0,16,16,0,0,TAU);
+      roundBody(g, 16, PAL.foe, PAL.foeDark); g.fill(); outline(g,.4);
+      /* the packed leaf whorls */
+      g.strokeStyle=rgba(PAL.foeDark,.75); g.lineWidth=1.6;
+      for (let i=1;i<=4;i++){
+        g.beginPath(); g.ellipse(0,i*.6,14-i*3,15-i*3.2,0,0,TAU); g.stroke();
+      }
+      g.strokeStyle='rgba(255,255,255,.35)'; g.lineWidth=1;
+      for (let i=1;i<=3;i++){ g.beginPath(); g.ellipse(-1,i*.6,13.5-i*3,14.5-i*3.2,0,0,TAU); g.stroke(); }
+      gloss(g, 15, .4);
+    }), 0, 0, 52, 52, 0);
+    ctx.beginPath(); ctx.arc(0,0,7+Math.sin(e.t*4)*1.5,0,TAU);
+    ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    foodHit(e, 23);
+    addGlow(e.x,e.y,34,PAL.foe,.5+e.flash*.5);
+  },
+
+  /* hauler · the cool-box. It hauls, it is big, and it is the one blue thing on any picnic */
+  hauler(e){
+    ctx.rotate(Math.sin(e.t*.3)*.12);
+    blitSprite(sprite('coolbox', 76, 56, g=>{
+      softShadow(g, 30);
+      g.beginPath(); g.moveTo(-30,-8); g.lineTo(30,-8); g.lineTo(24,20); g.lineTo(-24,20); g.closePath();
+      roundBody(g, 28, PAL.foe, PAL.foeDark); g.fill(); outline(g,.45);
+      /* the lid */
+      g.beginPath(); g.moveTo(-31,-14); g.lineTo(31,-14); g.lineTo(30,-6); g.lineTo(-30,-6); g.closePath();
+      g.fillStyle=rgba(PAL.elaser,.95); g.fill(); outline(g,.4);
+      /* the handle */
+      g.strokeStyle=rgba(PAL.foeDark,.9); g.lineWidth=3;
+      g.beginPath(); g.arc(0,-14,9,Math.PI,0); g.stroke();
+      /* a cold band across the front */
+      g.fillStyle='rgba(255,255,255,.22)'; g.fillRect(-26,4,52,4);
+      gloss(g, 24, .35);
+    }), 0, 0, 76, 56, 0);
+    /* the salvage ring — a shield readout, so it stays exactly where it was */
+    ctx.save(); ctx.rotate(e.ang);
+    ctx.strokeStyle=rgba(PAL.boss,.6); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,0,26,0,TAU); ctx.stroke(); ctx.restore();
+    ctx.fillStyle=rgba(PAL.ebullet,.85);
+    for (let i=-2;i<=2;i++) ctx.fillRect(i*11-3,-18,6,4);
+    foodHit(e, 30);
+    foodHpArc(e, 34);
+    addGlow(e.x,e.y,40,PAL.foe,.45+e.flash*.5);
+  },
+
+  /* scavver · a bluebottle. Every picnic has one and nobody invited it */
+  scavver(e){
+    ctx.rotate(e.dir>0?0:Math.PI);
+    blitSprite(sprite('bluebottle', 46, 34, g=>{
+      /* wings first, behind the body */
+      g.fillStyle='rgba(255,255,255,.30)';
+      for (const s of [-1,1]){
+        g.beginPath(); g.ellipse(-2, s*7, 9, 4.2, s*.4, 0, TAU); g.fill(); }
+      softShadow(g, 12);
+      g.beginPath(); g.ellipse(0,0,12,7,0,0,TAU);
+      roundBody(g, 11, PAL.boss, PAL.foeDark); g.fill();
+      /* the head and the big compound eye */
+      g.beginPath(); g.ellipse(11,0,5,5.4,0,0,TAU);
+      g.fillStyle=rgba(PAL.foeDark,1); g.fill();
+      g.beginPath(); g.arc(12.5,0,3,0,TAU); g.fillStyle=rgba(PAL.ebullet,.95); g.fill();
+      gloss(g, 10, .6);
+    }), 0, 0, 46, 34, 0);
+    foodHit(e, 14);
+    addGlow(e.x,e.y,18,PAL.boss,.5+e.flash*.5);
+  },
+
+  /* cinder · an iced star biscuit. It breaks into pieces, so it is a biscuit */
+  cinder(e){
+    ctx.rotate(e.ang);
+    blitSprite(sprite('biscuit', 52, 52, g=>{
+      softShadow(g, 18);
+      g.beginPath();
+      for (let i=0;i<10;i++){ const a=i/10*TAU, r=i%2?18:11;
+        const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+      g.closePath();
+      roundBody(g, 18, PAL.foeDark, PAL.foeDark); g.fill(); outline(g,.5);
+      /* the icing, inset — the biscuit edge shows all round it */
+      g.beginPath();
+      for (let i=0;i<10;i++){ const a=i/10*TAU, r=i%2?13.5:8;
+        const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+      g.closePath();
+      roundBody(g, 13, PAL.foe, PAL.elaser); g.fill();
+      gloss(g, 12, .45);
+    }), 0, 0, 52, 52, 0);
+    ctx.beginPath(); ctx.arc(0,0,6+Math.sin(e.t*6)*1.5,0,TAU);
+    ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    foodHit(e, 18);
+    addGlow(e.x,e.y,26,PAL.foe,.5+e.flash*.5);
+  },
+
+  /* ember · one loose blueberry, the piece a biscuit sheds */
+  ember(e){
+    const p = .6+Math.sin(e.t*9)*.4;
+    blitSprite(sprite('berrySm', 24, 24, g=>berry(g, 7.5, false)), 0, 0, 24, 24, 0);
+    ctx.strokeStyle=rgba(PAL.elaser,.7); ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.arc(0,0,10+p*2,0,TAU); ctx.stroke();
+    foodHit(e, 10);
+    addGlow(e.x,e.y,16,PAL.elaser,.6+p*.3);
+  },
+
+  /* blinker · a cube of jelly. Translucent was always the point */
+  blinker(e){
+    const f = e.fade===undefined?1:e.fade;
+    ctx.globalAlpha = .35+f*.65;
+    ctx.rotate(e.t*2);
+    blitSprite(sprite('jelly', 48, 48, g=>{
+      softShadow(g, 16);
+      g.beginPath(); g.moveTo(0,-16); g.lineTo(16,0); g.lineTo(0,16); g.lineTo(-16,0); g.closePath();
+      roundBody(g, 16, PAL.foe, PAL.foeDark); g.fill();
+      /* the wobble facets that make jelly read as jelly rather than as a gem */
+      g.strokeStyle='rgba(255,255,255,.35)'; g.lineWidth=1.4;
+      g.beginPath(); g.moveTo(-8,-8); g.lineTo(8,8); g.moveTo(8,-8); g.lineTo(-8,8); g.stroke();
+      g.beginPath(); g.moveTo(0,-16); g.lineTo(16,0); g.lineTo(0,16); g.lineTo(-16,0); g.closePath();
+      outline(g,.45);
+      gloss(g, 14, .7);
+    }), 0, 0, 48, 48, 0);
+    ctx.beginPath(); ctx.arc(0,0,5,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.95); ctx.fill();
+    ctx.globalAlpha = 1;
+    addGlow(e.x,e.y,22,PAL.foe,.3+f*.4+e.flash*.4);
+  },
+
+  /* prism · blue cheese. The rind is the shield, which is what the arc always was */
+  prism(e){
+    blitSprite(sprite('bluecheese', 52, 52, g=>{
+      softShadow(g, 19);
+      g.beginPath(); g.moveTo(0,-19); g.lineTo(17,12); g.lineTo(-17,12); g.closePath();
+      roundBody(g, 19, PAL.star, PAL.foe); g.fill(); outline(g,.45);
+      /* the veining */
+      g.strokeStyle=rgba(PAL.foeDark,.7); g.lineWidth=1.6;
+      for (const v of [[-6,-2,2,6],[4,-4,-2,8],[0,2,7,7],[-9,6,-3,10]]){
+        g.beginPath(); g.moveTo(v[0],v[1]); g.quadraticCurveTo(v[0]+3,v[1]+3, v[2],v[3]); g.stroke(); }
+      gloss(g, 15, .35);
+    }), 0, 0, 52, 52, 0);
+    const sa = e.sa===undefined?Math.PI/2:e.sa;
+    ctx.strokeStyle=rgba(PAL.elaser,.75); ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(0,0,26,sa-.7,sa+.7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    foodHit(e, 20);
+    addGlow(e.x,e.y,28,PAL.foe,.45+e.flash*.5);
+  },
+
+  /* shoal · one grape off the bunch. They only ever arrive in numbers */
+  shoal(e){
+    ctx.rotate(Math.PI/2+Math.sin(e.t*4+e.phase)*.4);
+    blitSprite(sprite('grape', 28, 28, g=>{
+      g.beginPath(); g.ellipse(0,0,9,8.6,0,0,TAU);
+      roundBody(g, 9, PAL.foe, PAL.foeDark); g.fill();
+      g.beginPath(); g.moveTo(0,-8); g.lineTo(0,-11);
+      g.strokeStyle=rgba(PAL.foeDark,.9); g.lineWidth=1.6; g.stroke();
+      gloss(g, 8, .6);
+    }), 0, 0, 28, 28, 0);
+    foodHit(e, 9);
+    addGlow(e.x,e.y,12,PAL.foe,.55);
+  },
+
+  /* angler · a mussel, and the pearl it dangles is the lure */
+  angler(e){
+    blitSprite(sprite('mussel', 60, 48, g=>{
+      softShadow(g, 22);
+      g.beginPath(); g.ellipse(0,0,22,17,0,0,TAU);
+      roundBody(g, 22, PAL.foeDark, PAL.foeDark); g.fill();
+      /* growth ridges fanning from the hinge */
+      g.strokeStyle=rgba(PAL.foe,.55); g.lineWidth=1.4;
+      for (let i=1;i<=4;i++){ g.beginPath(); g.ellipse(-4,0,4+i*4.4,3+i*3.4,0,-1.4,1.4); g.stroke(); }
+      g.strokeStyle=rgba(PAL.foe,.85); g.lineWidth=2;
+      g.beginPath(); g.ellipse(0,0,22,17,0,0,TAU); g.stroke();
+      gloss(g, 18, .35);
+    }), 0, 0, 60, 48, 0);
+    /* the gape, where the teeth were */
+    ctx.fillStyle=rgba(PAL.ebullet,.85);
+    for (let i=0;i<5;i++){ const a=Math.PI*.2+i/5*Math.PI*.6;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*14,Math.sin(a)*10);
+      ctx.lineTo(Math.cos(a)*24,Math.sin(a)*18); ctx.lineTo(Math.cos(a+.14)*14,Math.sin(a+.14)*10);
+      ctx.closePath(); ctx.fill(); }
+    /* asleep and awake must look nothing alike — the reason this is hot-band, not gold */
+    const l = e.lure===undefined?.5:e.lure;
+    const lc = e.woke ? PAL.elaser : PAL.ebullet;
+    ctx.beginPath(); ctx.moveTo(0,-14); ctx.quadraticCurveTo(14,-34,2,-44);
+    ctx.strokeStyle=rgba(PAL.foe,e.woke?.85:.6); ctx.lineWidth=e.woke?2:1.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(2,-44,(e.woke?5:3.4)+l*(e.woke?3:1.4),0,TAU);
+    ctx.fillStyle=rgba(lc,.95); ctx.fill();
+    foodHit(e, 22);
+    addGlow(e.x+2,e.y-44,e.woke?32:20,lc,(e.woke?.7:.35)+l*.4);
+  },
+
+  /* ---- batch two · campaign one's sequel roster ---- */
+
+  /* wisp · thistledown, the thing that blows across a picnic and homes in on you */
+  wisp(e){
+    ctx.rotate(e.t*.7);
+    blitSprite(sprite('thistle', 48, 48, g=>{
+      /* the pappus: fine filaments, so the silhouette stays soft where the others are solid */
+      g.strokeStyle=rgba(PAL.foe,.75); g.lineWidth=1.3;
+      for (let i=0;i<14;i++){ const a=i/14*TAU;
+        g.beginPath(); g.moveTo(Math.cos(a)*4,Math.sin(a)*4);
+        g.lineTo(Math.cos(a)*16,Math.sin(a)*16); g.stroke();
+        g.beginPath(); g.arc(Math.cos(a)*16,Math.sin(a)*16,1.5,0,TAU);
+        g.fillStyle=rgba(PAL.elaser,.8); g.fill();
+      }
+      g.beginPath(); g.arc(0,0,5,0,TAU);
+      roundBody(g, 5, PAL.foeDark, PAL.foeDark); g.fill();
+    }), 0, 0, 48, 48, 0);
+    ctx.beginPath(); ctx.arc(0,0,4,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    foodHit(e, 16);
+    addGlow(e.x,e.y,24,PAL.foe,.5+e.flash*.4);
+  },
+
+  /* polyp · an artichoke. Its leaves are the tentacles, and it sheds them as motes */
+  polyp(e){
+    ctx.strokeStyle=e.flash>0?flashFill(1):rgba(PAL.foe,.85); ctx.lineWidth=3;
+    for (let i=0;i<5;i++){
+      const a=i/5*TAU+e.t*.2, r=26+Math.sin(e.t*2+i)*5;
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.quadraticCurveTo(Math.cos(a)*r*.6-8,Math.sin(a)*r*.6, Math.cos(a)*r,Math.sin(a)*r); ctx.stroke();
+    }
+    blitSprite(sprite('artichoke', 56, 56, g=>{
+      softShadow(g, 19);
+      g.beginPath(); g.ellipse(0,1,17,18,0,0,TAU);
+      roundBody(g, 18, PAL.foe, PAL.foeDark); g.fill();
+      /* overlapping bracts, drawn bottom-up so each tucks under the one above */
+      for (let row=3; row>=0; row--){
+        const y = 8 - row*5.5, n = 3+row, w = 8 - row*.9;
+        for (let i=0;i<n;i++){
+          const x = (i-(n-1)/2) * (w*1.5);
+          g.beginPath(); g.ellipse(x, y, w*.62, 4.6, 0, 0, TAU);
+          g.fillStyle = rgba(row%2?PAL.foe:PAL.elaser, .92); g.fill();
+          g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=1; g.stroke();
+        }
+      }
+      gloss(g, 15, .4);
+    }), 0, 0, 56, 56, 0);
+    ctx.beginPath(); ctx.arc(0,0,8+Math.sin(e.t*3)*2,0,TAU);
+    ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    foodHit(e, 26);
+    addGlow(e.x,e.y,36,PAL.foe,.5+e.flash*.4);
+  },
+
+  /* chorister · a slice of red onion. It sings in rings, and rings are what an onion is */
+  chorister(e){
+    ctx.rotate(Math.sin(e.t*1.5)*.2);
+    blitSprite(sprite('onion', 52, 52, g=>{
+      softShadow(g, 18);
+      g.beginPath(); g.arc(0,0,18,0,TAU);
+      roundBody(g, 18, PAL.star, PAL.foe); g.fill();
+      g.strokeStyle=rgba(PAL.foe,.9); g.lineWidth=2.2;
+      g.beginPath(); g.arc(0,0,18,0,TAU); g.stroke();
+      /* the concentric layers, paler toward the middle */
+      for (let i=1;i<=4;i++){
+        g.beginPath(); g.arc(0,0,18-i*3.4,0,TAU);
+        g.strokeStyle=rgba(i%2?PAL.foe:PAL.foeDark,.42+i*.06); g.lineWidth=1.8; g.stroke();
+      }
+      gloss(g, 15, .45);
+    }), 0, 0, 52, 52, 0);
+    /* the standing waves it sings — unchanged, they are the tell */
+    const w = 1+Math.sin(e.t*4)*.5;
+    ctx.strokeStyle=rgba(PAL.elaser,.35); ctx.lineWidth=1.4;
+    for (let i=1;i<=2;i++){ ctx.beginPath(); ctx.arc(0,0,18+i*8*w,0,TAU); ctx.stroke(); }
+    foodHit(e, 20);
+    addGlow(e.x,e.y,28,PAL.foe,.5+e.flash*.4);
+  },
+
+  /* warp · a moth. It is there, then it is somewhere else, and you never see it cross */
+  warp(e){
+    const f = clamp(1-e.bt/1.4,0,1);
+    ctx.rotate(e.t*1.6);
+    blitSprite(sprite('moth', 48, 44, g=>{
+      /* wings: the upper pair broad, the lower pair tucked, both dusty and translucent */
+      for (const s of [-1,1]){
+        g.beginPath(); g.ellipse(s*9,-3, 9, 6.5, s*-.5, 0, TAU);
+        g.fillStyle=rgba(PAL.foe,.7); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=1; g.stroke();
+        g.beginPath(); g.ellipse(s*7,6, 6.5, 4.5, s*.35, 0, TAU);
+        g.fillStyle=rgba(PAL.elaser,.6); g.fill();
+        /* the eyespot every moth wing has */
+        g.beginPath(); g.arc(s*10,-4,2.2,0,TAU);
+        g.fillStyle=rgba(PAL.foeDark,.75); g.fill();
+      }
+      g.beginPath(); g.ellipse(0,0,3.4,11,0,0,TAU);
+      roundBody(g, 8, PAL.foeDark, PAL.foeDark); g.fill();
+      /* antennae */
+      g.strokeStyle=rgba(PAL.foeDark,.85); g.lineWidth=1.2;
+      for (const s of [-1,1]){
+        g.beginPath(); g.moveTo(s*1,-10); g.quadraticCurveTo(s*5,-15, s*7,-13); g.stroke(); }
+    }), 0, 0, 48, 44, 0);
+    /* the charge-up before it jumps — same clock, same read */
+    ctx.beginPath(); ctx.arc(0,0,4+f*4,0,TAU);
+    ctx.fillStyle=rgba(PAL.ebullet,.55+f*.4); ctx.fill();
+    foodHit(e, 16);
+    addGlow(e.x,e.y,20+f*10,PAL.foe,.4+f*.4+e.flash*.4);
+  },
+
+  /* pulsar · a blueberry macaron. It swells on the beat, and a macaron is two shells and a
+     filling — which is exactly a thing that pulses */
+  pulsar(e){
+    blitSprite(sprite('macaron', 56, 56, g=>{
+      softShadow(g, 21);
+      /* lower shell */
+      g.beginPath(); g.ellipse(0,6,20,10,0,0,TAU);
+      roundBody(g, 19, PAL.foe, PAL.foeDark); g.fill();
+      /* the filling, squeezed out between them */
+      g.beginPath(); g.ellipse(0,0,19,6,0,0,TAU);
+      g.fillStyle=rgba(PAL.elaser,.95); g.fill();
+      /* upper shell */
+      g.beginPath(); g.ellipse(0,-6,20,11,0,0,TAU);
+      roundBody(g, 19, PAL.foe, PAL.foeDark); g.fill();
+      /* the ruffled foot each shell sits on */
+      g.fillStyle=rgba(PAL.foeDark,.35);
+      for (let i=0;i<9;i++){ const x=-17+i*4.2;
+        g.beginPath(); g.arc(x, 10, 2.1, 0, TAU); g.fill(); }
+      gloss(g, 17, .5);
+    }), 0, 0, 56, 56, 0);
+    foodHit(e, 22);
+    addGlow(e.x,e.y,30,PAL.foe,.45+e.flash*.5);
+  },
+
+  /* mote · a poppy seed. The smallest real food there is, and it is already blue-black */
+  mote(e){
+    blitSprite(sprite('poppy', 20, 20, g=>{
+      g.beginPath(); g.ellipse(0,0,5,4,0,0,TAU);
+      roundBody(g, 5, PAL.foe, PAL.foeDark); g.fill();
+      /* the kidney notch, which is what makes a poppy seed a poppy seed */
+      g.beginPath(); g.arc(2.2,0,2.4,0,TAU);
+      g.fillStyle=rgba(PAL.foeDark,.55); g.fill();
+    }), 0, 0, 20, 20, e.t*1.4);
+    foodHit(e, 9);
+    addGlow(e.x,e.y,10,PAL.foe,.4+e.flash*.3);
+  }
 };
 
 function applySkin(key){
@@ -4820,7 +5303,10 @@ function drawTitleShip(){
 
 /* --- enemy art --- */
 function drawEnemies(){
-  for (const e of enemies){ ctx.save(); ctx.translate(e.x,e.y); TYPES[e.type].draw(e); ctx.restore(); }
+  /* the skin's food first, the space silhouette when it has none — the same fallback the
+     hazards and the player use, which is what lets the roster land in batches */
+  for (const e of enemies){ ctx.save(); ctx.translate(e.x,e.y);
+    (art('enemy', e.type) || TYPES[e.type].draw)(e); ctx.restore(); }
   drawTells();
 }
 /* A second pass rather than a call inside each of the 19 draw fns: a tell occluded by a
