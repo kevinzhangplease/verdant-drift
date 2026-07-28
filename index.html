@@ -206,6 +206,16 @@ function seedRun(s){ lastSeed = s>>>0; const g = mulberry32(lastSeed); _rng = g;
 function dailyKey(){ const d = new Date(); return d.getUTCFullYear()+'-'+(d.getUTCMonth()+1)+'-'+d.getUTCDate(); }
 function dailySeed(){ const s = dailyKey(); let h = 2166136261; for (let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h,16777619); } return h>>>0; }
 
+/* Cosmetic randomness draws from its own generator (#21). Particle counts are clamped by
+   qParts(), which the adaptive-quality monitor lowers based on measured frame time — so
+   letting sparks draw from the seeded stream made the number of draws depend on wall-clock
+   performance, and the simulation diverged from itself. Daily Drift was never actually
+   reproducible. Keeping decoration on a separate stream is what makes the seed mean something. */
+let _fxRng = mulberry32(0x9E3779B9);
+function seedFx(s){ _fxRng = mulberry32((s>>>0) ^ 0x9E3779B9); }
+const frnd = (a,b) => a + _fxRng()*(b-a);
+const fchance = p => _fxRng() < p;
+
 const rnd  = (a,b) => a + rand()*(b-a);
 const rint = (a,b) => Math.floor(rnd(a,b+1));
 const pick = a => a[Math.floor(rand()*a.length)];
@@ -413,7 +423,12 @@ const Sound = {
   _nb:null,
   noiseBuf(){ if (this._nb) return this._nb;
     const len=this.ac.sampleRate, b=this.ac.createBuffer(1,len,this.ac.sampleRate), d=b.getChannelData(0);
-    for (let i=0;i<len;i++) d[i]=Math.random()*2-1;
+    /* _origRandom, not the seeded stream: this buffer is built lazily on the first explosion
+       — i.e. whenever async audio init happens to finish — and it draws a full second of
+       samples. Feeding it from the run's RNG shifted the seeded sequence by ~48k draws at a
+       wall-clock-dependent moment, which desynchronised Daily Drift the instant anything
+       exploded. Noise never needs to be reproducible. */
+    for (let i=0;i<len;i++) d[i]=_origRandom()*2-1;
     this._nb=b; return b; },
   _lastShot:0,
   shot(){ if (!this.ready) return; const t=this.ac.currentTime;
@@ -533,7 +548,7 @@ const BEAT_SEC = 60/96;            /* gameplay beat clock, matched to the 96 BPM
 let lastBeat = -1, beatCount = 0, beatTick = false;
 
 let state='title';
-let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], floats=[], lasers=[], shocks=[], groups=[], ground=[], groundFx=[];
+let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], floats=[], lasers=[], shocks=[], groups=[], ground=[], groundFx=[], warns=[];
 let boss=null, bossMaxHP=0;
 let shake=0, flash=0, hitstop=0, whiteout=0, curveField=0, pullField=0;
 let score=0, cores=0, chain=0, chainTimer=0, mult=1;
@@ -610,11 +625,12 @@ function eliteScale(baseHP){
 const PHASE_MIN = 5, DEFAULT_PHASES = [.66,.33];
 
 function clearField(){
-  enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[];
+  enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[]; warns=[];
   boss=null; curveField=0; pullField=0;
 }
 function resetRun(startLevel){
   clearField();
+  seedFx(lastSeed || 1);        /* decoration is reproducible too — just never from the sim's stream */
   shake=0; flash=0; hitstop=0; whiteout=0;
   score=0; cores=0; chain=0; chainTimer=0; mult=1;
   graze=0; grazeStreak=0; grazeMult=0; grazeTimer=0; rank=0;
@@ -867,15 +883,30 @@ function spawnEnemy(type,x,y,opts){
   const t = TYPES[type];
   const hp = t.hp*diff.hp*eliteScale(t.hp);
   const e = Object.assign({
-    type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6),
+    type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6), salvo:null,
     vx:0, vy:t.speed, ang:0, flash:0, phase:rnd(0,TAU), drop:null, state:'in', holdY:H*.2
   }, opts||{});
   enemies.push(e);
   return e;
 }
 
+/* Cadence (#21): every shooter in the game fired one shot on a flat 1.4–3.6s timer. A salvo
+   is a burst of n with an optional ramp — `ramp<1` accelerates into a crescendo, `>1` trails
+   off — which is the cheapest way to make two enemies with the same payload feel different. */
+function salvo(e,n,gap,fn,ramp){ e.salvo = { n, i:0, t:0, gap, fn, ramp:ramp||1 }; }
+function nearP(e,r){ return dist2(e.x,e.y,P.x,P.y) < r*r; }
+
 function updateEnemy(e,dt){
   e.t += dt; e.flash = Math.max(0,e.flash-dt*5);
+  if (e.salvo){
+    const s = e.salvo;
+    s.t -= dt*RATE;
+    if (s.t<=0){
+      s.fn(e, s.i); s.i++;
+      s.t = s.gap; s.gap *= s.ramp;
+      if (s.i >= s.n) e.salvo = null;
+    }
+  }
   switch (e.type){
     case 'wisp':
       e.y += e.vy*dt*.7; e.x += Math.sin(e.t*.9+e.phase)*90*dt;
@@ -928,7 +959,7 @@ function updateEnemy(e,dt){
       const a = Math.atan2(P.y-e.y,P.x-e.x);
       e.vx = lerp(e.vx, Math.cos(a)*190, .015); e.vy = lerp(e.vy, Math.sin(a)*190, .015);
       e.x += e.vx*dt; e.y += e.vy*dt;
-      if (Math.random()<dt*18) parts.push({x:e.x,y:e.y,vx:0,vy:-20,life:.3,max:.3,r:2,c:PAL.foe,g:0});
+      if (fchance(dt*18)) parts.push({x:e.x,y:e.y,vx:0,vy:-20,life:.3,max:.3,r:2,c:PAL.foe,g:0});
       break;
     }
 
@@ -949,7 +980,7 @@ function updateEnemy(e,dt){
           e.vx=Math.cos(a)*430*BV; e.vy=Math.sin(a)*430*BV; e.state='dive'; }
       } else {
         e.x += e.vx*dt; e.y += e.vy*dt;
-        if (Math.random()<dt*30) parts.push({x:e.x,y:e.y,vx:rnd(-20,20),vy:rnd(-20,20),life:.3,max:.3,r:2.5,c:PAL.foe,g:0});
+        if (fchance(dt*30)) parts.push({x:e.x,y:e.y,vx:frnd(-20,20),vy:frnd(-20,20),life:.3,max:.3,r:2.5,c:PAL.foe,g:0});
       }
       break;
 
@@ -1002,7 +1033,7 @@ function updateEnemy(e,dt){
       e.vx = lerp(e.vx, Math.cos(a)*130*BV, .02);
       e.vy = lerp(e.vy, Math.sin(a)*130*BV, .02);
       e.x += e.vx*dt; e.y += e.vy*dt;
-      if (Math.random()<dt*24) parts.push({x:e.x,y:e.y,vx:rnd(-14,14),vy:rnd(-30,-8),life:.4,max:.4,r:2.2,c:PAL.foe,g:0});
+      if (fchance(dt*24)) parts.push({x:e.x,y:e.y,vx:frnd(-14,14),vy:frnd(-30,-8),life:.4,max:.4,r:2.2,c:PAL.foe,g:0});
       break; }
 
     case 'blinker':
@@ -1059,10 +1090,39 @@ function updateEnemy(e,dt){
 }
 
 /* --- bullet emitters shared by enemies and bosses --- */
+/* Bullet kinetics (#21): hom/curve/acc were authored at seven call sites and silently
+   discarded for the life of the game — fireAng only ever read r/life/big. Every field is
+   written unconditionally so the record stays monomorphic, and `k` lets the hot loop skip
+   the whole kinetics branch for the ~95% of bullets that fly straight. */
 function fireAng(x,y,a,sp,o){
-  if (ebullets.length>720) ebullets.shift();
+  if (ebullets.length>720) swapDel(ebullets,0);
+  const hom=(o&&o.hom)||0, curve=(o&&o.curve)||0, acc=(o&&o.acc)||0;
   ebullets.push({ x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:(o&&o.r)||6, life:(o&&o.life)||8,
-                  t:0, big:(o&&o.big)||false });
+                  t:0, big:(o&&o.big)||false, hom, curve, acc, k:!!(hom||curve||acc) });
+}
+/* Homing always decays, so a bullet you've beaten stays beaten — the turn rate is capped and
+   the tracking bleeds off within about a second. Curve composes with the global curveField
+   rather than replacing it, so quietstar's phase-4 twist still applies on top. */
+const HOM_TURN = 3.2;
+function bulletKinetics(b,dt){
+  if (b.hom && P.alive){
+    const cur = Math.atan2(b.vy,b.vx), want = Math.atan2(P.y-b.y, P.x-b.x);
+    let d = want-cur;
+    while (d>Math.PI) d-=TAU;
+    while (d<-Math.PI) d+=TAU;
+    const step = clamp(d, -HOM_TURN*b.hom*dt, HOM_TURN*b.hom*dt);
+    const a = cur+step, sp = Math.hypot(b.vx,b.vy);
+    b.vx = Math.cos(a)*sp; b.vy = Math.sin(a)*sp;
+    b.hom *= Math.pow(.3, dt);
+    if (b.hom < .02) b.hom = 0;
+  }
+  const tw = b.curve + curveField;
+  if (tw){
+    const a = Math.atan2(b.vy,b.vx) + tw*dt, sp = Math.hypot(b.vx,b.vy);
+    b.vx = Math.cos(a)*sp; b.vy = Math.sin(a)*sp;
+  }
+  if (b.acc){ const f = 1 + b.acc*dt; b.vx *= f; b.vy *= f; }
+  if (!b.hom && !b.curve && !b.acc) b.k = false;
 }
 function fireAt(x,y,tx,ty,sp,o){ fireAng(x,y,Math.atan2(ty-y,tx-x),sp,o); }
 /* #7: harder = denser geometry, not more HP. Void adds a tier; sustained high rank
@@ -1091,6 +1151,49 @@ function shotgun(x,y,tx,ty,n,spread,sp1,sp2,o){
   for (let i=0;i<N;i++) fireAng(x,y, base+rnd(-spread,spread), rnd(sp1,sp2), o);
 }
 function lance(x,y,a,warn,live){ lasers.push({ x,y,a, warn, live, w:0 }); Sound.alarm(); }
+/* ---- telegraphs (#21) -------------------------------------------------------
+   Until now `lance`'s warn was the only wind-up in the game, and it was laser-shaped:
+   rings, walls and rain simply appeared. A tell is what turns a punishing pattern into a
+   learnable one, so it gets a primitive of its own.
+     · Ticks on raw dt, never dt*RATE — rank and gear speed up cadence, they never shorten
+       the warning. That distinction is the whole difference between hard and unfair.
+     · Drawn dashed and translucent, under live fire, never solid and never bullet-shaped,
+       so a warning can't be misread as a projectile.
+     · `cancel` voids the tell if its owner dies, so killing a shooter mid-wind-up stops
+       the shot — the reward for engaging with the threat rather than dodging it. */
+const WARN_MAX = 12;
+function telegraph(kind,x,y,a,dur,o){
+  if (warns.length >= WARN_MAX){ const w = warns.shift(); if (w.fn) w.fn(); }
+  warns.push({ kind, x, y, a, t:0, dur:dur||.5, r:(o&&o.r)||34, n:(o&&o.n)||0,
+               fn:(o&&o.fn)||null, src:(o&&o.src)||null,
+               follow:!!(o&&o.follow), cancel:!!(o&&o.cancel) });
+}
+function warnDead(w){
+  const s = w.src;
+  if (!s) return false;
+  if (s === boss) return !boss || !!boss.dying;
+  if (s.alive === false) return true;
+  return s.hp !== undefined && s.hp <= 0;
+}
+function updateWarns(dt){
+  for (let i=warns.length-1;i>=0;i--){
+    const w = warns[i];
+    if (w.cancel && warnDead(w)){ swapDel(warns,i); continue; }
+    if (w.follow && w.src){ w.x = w.src.x; w.y = w.src.y; }
+    w.t += dt;                                   /* deliberately not dt*RATE */
+    if (w.t >= w.dur){ const fn = w.fn; swapDel(warns,i); if (fn) fn(); }
+  }
+}
+/* Shortest distance from the ship to a line segment — the shared hitbox behind tethers,
+   link cages, rotating bars and arena walls. Returns true if it connected. */
+function hurtOnSegment(x0,y0,x1,y1,w){
+  if (!P.alive || P.inv>0) return false;
+  const dx=x1-x0, dy=y1-y0, L2=dx*dx+dy*dy||1;
+  const t = clamp(((P.x-x0)*dx+(P.y-y0)*dy)/L2, 0, 1);
+  const px=x0+dx*t, py=y0+dy*t, r=w+P.r;
+  if (dist2(px,py,P.x,P.y) < r*r){ hurtPlayer(); return true; }
+  return false;
+}
 
 function damageEnemy(e,dmg,silent){
   if (e.type==='prism'){
@@ -1184,8 +1287,8 @@ function groundStrike(x,y,dmg){
   for (let i=ground.length-1;i>=0;i--){ const g=ground[i];
     if (dist2(g.x,g.y,x,y) < (44+g.r)*(44+g.r)){ damageGround(g,dmg); hit = true; } }
   groundFx.push({ x, y, t:0, hit });
-  for (let k=0;k<(hit?7:3);k++){ const a=rnd(0,TAU), s=rnd(40,150);
-    pPart({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:rnd(.15,.35), r:rnd(1,2.4), c:PAL.bolt, g:0 }); }
+  for (let k=0;k<(hit?7:3);k++){ const a=frnd(0,TAU), s=frnd(40,150);
+    pPart({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:frnd(.15,.35), r:frnd(1,2.4), c:PAL.bolt, g:0 }); }
 }
 /* --- the ground plane, drawn below the air combat --- */
 /* a scrolling structural grid so the second layer reads as a real floor with the
@@ -1536,12 +1639,7 @@ forgetwin:{
         /* the tether between the twins is the real threat */
         const a = b.parts[0], c = b.parts[1];
         if (!a.alive || !c.alive) return;
-        if (P.inv<=0 && P.alive){
-          const dx=c.x-a.x, dy=c.y-a.y, L=Math.hypot(dx,dy)||1;
-          const t = clamp(((P.x-a.x)*dx+(P.y-a.y)*dy)/(L*L),0,1);
-          const px=a.x+dx*t, py=a.y+dy*t;
-          if (dist2(px,py,P.x,P.y) < 14*14) hurtPlayer();
-        } } },
+        hurtOnSegment(a.x,a.y,c.x,c.y,14-P.r); } },
     { k:'twinfire', every:1.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         shotgun(p.x,p.y,P.x,P.y,4,.22,200,290,{r:5}); } },
     { k:'core', every:1.1, needParts:0, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.9;
@@ -1603,13 +1701,10 @@ sovereign:{
   attacks:[
     { k:'link', every:.07, needParts:1, fn:(b)=>{
         const live = b.parts.filter(p=>p.alive);
-        if (P.inv>0 || !P.alive) return;
+        if (live.length<2) return;
         for (let i=0;i<live.length;i++){
           const a=live[i], c=live[(i+1)%live.length];
-          if (live.length<2) break;
-          const dx=c.x-a.x, dy=c.y-a.y, L=dx*dx+dy*dy||1;
-          const t = clamp(((P.x-a.x)*dx+(P.y-a.y)*dy)/L,0,1);
-          if (dist2(a.x+dx*t, a.y+dy*t, P.x, P.y) < 12*12){ hurtPlayer(); break; }
+          if (hurtOnSegment(a.x,a.y,c.x,c.y,12-P.r)) break;
         } } },
     { k:'node', every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.7)
         fireAt(p.x,p.y,P.x,P.y,230*BV,{r:5}); } },
@@ -1977,9 +2072,9 @@ function relicTick(dt){
   if (P.odT > 0){
     P.odT -= dt;
     P.fireT -= dt*1.6;                                 /* far faster fire while broken */
-    if (Math.random() < dt*95)
-      pPart({ x:P.x+rnd(-18,18), y:P.y+rnd(-16,16), vx:rnd(-50,50), vy:rnd(70,200),
-              life:.45, r:rnd(1.6,4.2), c:PAL.bolt, g:0 });
+    if (fchance(dt*95))
+      pPart({ x:P.x+frnd(-18,18), y:P.y+frnd(-16,16), vx:frnd(-50,50), vy:frnd(70,200),
+              life:.45, r:frnd(1.6,4.2), c:PAL.bolt, g:0 });
     if (P.odT <= 0) floatText(P.x,P.y-30,'BREAK OUT',PAL.hull);
   } else if (P.od >= 1){
     P.od = 0; P.odT = R.surge?8:6;
@@ -2045,10 +2140,10 @@ const HAZARDS = {
         if (c.phase==='idle' && c.was==='fire'){ c.x = rnd(W*.12,W*.88); }
         c.was = c.phase;
         if (c.phase==='fire' && P.alive && P.inv<=0 && Math.abs(P.x-c.x) < 26) hurtPlayer();
-        if (c.phase==='fire' && Math.random()<dt*40)
-          parts.push({x:c.x+rnd(-20,20), y:rnd(0,H), vx:rnd(-20,20), vy:rnd(-260,-90), life:.5,max:.5,r:rnd(1.5,3.5),c:PAL.elaser,g:0});
+        if (c.phase==='fire' && fchance(dt*40))
+          parts.push({x:c.x+frnd(-20,20), y:frnd(0,H), vx:frnd(-20,20), vy:frnd(-260,-90), life:.5,max:.5,r:frnd(1.5,3.5),c:PAL.elaser,g:0});
       }
-      if (Math.random()<dt*8) parts.push({x:rnd(0,W),y:H+8,vx:rnd(-14,14),vy:rnd(-90,-40),life:2,max:2,r:rnd(1,2.4),c:PAL.foe,g:0});
+      if (fchance(dt*8)) parts.push({x:frnd(0,W),y:H+8,vx:frnd(-14,14),vy:frnd(-90,-40),life:2,max:2,r:frnd(1,2.4),c:PAL.foe,g:0});
     },
     drawBack(){},
     drawFront(){
@@ -3095,13 +3190,13 @@ function addScore(v,x,y,quiet){
 function floatText(x,y,txt,col){ floats.push({ x,y,txt,col,life:.9,max:.9 }); }
 function burst(x,y,n,col,sp){
   n = Math.min(n, qParts());
-  for (let i=0;i<n;i++){ const a=rnd(0,TAU), s=rnd(sp*.16,sp);
-    pPart({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:rnd(.25,.8), max:.8, r:rnd(1.4,4.4), c:col, g:60 }); }
+  for (let i=0;i<n;i++){ const a=frnd(0,TAU), s=frnd(sp*.16,sp);
+    pPart({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:frnd(.25,.8), max:.8, r:frnd(1.4,4.4), c:col, g:60 }); }
   pPart({ x,y, vx:0, vy:0, life:.3, max:.3, r:n*1.1, c:col, g:0, ring:true });
 }
 function spark(x,y,col){
-  for (let i=0;i<6;i++){ const a=rnd(0,TAU), s=rnd(30,170);
-    pPart({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:rnd(.12,.3), max:.3, r:rnd(1,2.4), c:col, g:0 }); }
+  for (let i=0;i<6;i++){ const a=frnd(0,TAU), s=frnd(30,170);
+    pPart({ x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:frnd(.12,.3), max:.3, r:frnd(1,2.4), c:col, g:0 }); }
 }
 
 /* ============================================================
@@ -3223,10 +3318,7 @@ function update(dt){
   for (let i=ebullets.length-1;i>=0;i--){
     const b = ebullets[i];
     b.t += dt; b.life -= dt;
-    if (curveField){
-      const a = Math.atan2(b.vy,b.vx) + curveField*dt, sp = Math.hypot(b.vx,b.vy);
-      b.vx = Math.cos(a)*sp; b.vy = Math.sin(a)*sp;
-    }
+    if (b.k || curveField) bulletKinetics(b,dt);
     b.x += b.vx*dt; b.y += b.vy*dt;
     if (b.x<-50||b.x>W+50||b.y<-50||b.y>H+60||b.life<=0){ swapDel(ebullets,i); continue; }
     if (P.alive && P.inv<=0){
@@ -3237,6 +3329,8 @@ function update(dt){
     }
   }
   if (grazeTimer>0){ grazeTimer -= dt; if (grazeTimer<=0){ grazeStreak=0; grazeMult=0; recalcMult(); } }
+
+  updateWarns(dt);
 
   /* lances */
   for (let i=lasers.length-1;i>=0;i--){
@@ -3288,8 +3382,8 @@ function update(dt){
 
   shake *= Math.pow(.02,dt); flash *= Math.pow(.02,dt); whiteout *= Math.pow(.005,dt);
 
-  if (P.alive && Math.random()<dt*90)
-    parts.push({ x:P.x+rnd(-4,4), y:P.y+13, vx:rnd(-16,16), vy:rnd(120,220), life:.3, max:.3, r:rnd(1.6,3.4), c:PAL.bolt, g:0 });
+  if (P.alive && fchance(dt*90))
+    parts.push({ x:P.x+frnd(-4,4), y:P.y+13, vx:frnd(-16,16), vy:frnd(120,220), life:.3, max:.3, r:frnd(1.6,3.4), c:PAL.bolt, g:0 });
 
   Sound.targetIntensity = boss ? 1 : clamp(.2+enemies.length*.09+chain*.01,.15,.9);
 }
@@ -3319,7 +3413,7 @@ function render(dt){
     drawGround();
     drawPickups(); drawParticles(); drawEnemies();
     if (boss) drawBoss();
-    drawLasers(); drawShocks(); drawPlayerBullets(); drawEnemyBullets();
+    drawWarns(); drawLasers(); drawShocks(); drawPlayerBullets(); drawEnemyBullets();
     if (P.alive) drawShip();
     drawGroundFx(dt); drawReticle();
     drawFloats();
@@ -3611,6 +3705,41 @@ function drawBoss(){
   d.draw(b);
   ctx.restore();
   addGlow(b.x,b.y,b.r*1.6,PAL.boss,.55+b.flash*.4);
+}
+/* Warnings read as intent, never as ordnance: dashed, translucent, hot-band, and drawn
+   under live fire. The dash tightens and the shape closes as the moment arrives. */
+function drawWarns(){
+  if (qLevel<1 || !warns.length) return;
+  ctx.save();
+  for (const w of warns){
+    const k = clamp(w.t/w.dur,0,1), pulse = .18 + k*.34 + Math.sin(w.t*34)*.08;
+    ctx.strokeStyle = rgba(PAL.elaser, pulse);
+    ctx.lineWidth = 1.5 + k*1.5;
+    ctx.setLineDash([9 - k*5, 8 - k*4]);
+    ctx.beginPath();
+    if (w.kind==='ring'){
+      ctx.arc(w.x, w.y, w.r*(1.55-k*.55), 0, TAU);
+    } else if (w.kind==='point'){
+      const r = w.r*(1.9-k*1.5);
+      ctx.moveTo(w.x-r,w.y); ctx.lineTo(w.x+r,w.y);
+      ctx.moveTo(w.x,w.y-r); ctx.lineTo(w.x,w.y+r);
+      ctx.arc(w.x, w.y, r*.7, 0, TAU);
+    } else if (w.kind==='line'){
+      const len = Math.max(W,H)*1.6, c=Math.cos(w.a), s=Math.sin(w.a);
+      ctx.moveTo(w.x, w.y); ctx.lineTo(w.x+c*len, w.y+s*len);
+    } else if (w.kind==='fan'){
+      const half = (w.n||.5)/2, len = w.r*(2+k*1.4);
+      for (let i=-1;i<=1;i+=2){
+        const a = w.a + half*i;
+        ctx.moveTo(w.x, w.y); ctx.lineTo(w.x+Math.cos(a)*len, w.y+Math.sin(a)*len);
+      }
+    } else if (w.kind==='arc'){
+      ctx.arc(w.x, w.y, w.r, w.a-(w.n||.6)/2, w.a+(w.n||.6)/2);
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 function drawLasers(){
   for (const l of lasers){
