@@ -235,11 +235,14 @@ function pPart(o){ const p = partPool.length ? partPool.pop() : {};
 
 /* --- player settings + saved progress (localStorage) --- */
 const Settings = { shake:1, flash:1, safeFlash:false, colorblind:false, haptics:true, hitbox:true, focusSlow:false, quality:'auto' };
-let Best = { hi:0, furthest:1, sectors:{}, daily:{}, launches:0 };
+let Best = { hi:0, furthest:1, sectors:{}, daily:{}, launches:0, grades:{} };
 const SAVE_KEY = 'verdantDrift.v1';
 function loadSave(){
   try{ const d = JSON.parse(localStorage.getItem(SAVE_KEY)||'null');
-    if (d){ if (d.settings) Object.assign(Settings,d.settings); if (d.best) Object.assign(Best,d.best); return d.pref||null; }
+    if (d){ if (d.settings) Object.assign(Settings,d.settings);
+            if (d.best) Object.assign(Best,d.best);
+            if (!Best.grades) Best.grades = {};      /* older saves predate grading */
+            return d.pref||null; }
   }catch(e){}
   return null;
 }
@@ -248,6 +251,12 @@ function saveSave(){
     settings:Settings, best:Best,
     pref:{ diff:diff.key, speed:speedIdx, muted:Sound.muted }
   })); }catch(e){}
+}
+function recordSectorGrade(levelIndex, gi){
+  if (gi < 0) return;
+  const k = 's'+(levelIndex+1), prev = Best.grades[k];
+  if (prev === undefined || gi < prev) Best.grades[k] = gi;   /* lower index = better */
+  saveSave();
 }
 function recordRun(finalScore, sectorReached){
   Best.hi = Math.max(Best.hi, finalScore);
@@ -582,6 +591,22 @@ let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], float
 let boss=null, bossMaxHP=0;
 let shake=0, flash=0, hitstop=0, whiteout=0, curveField=0, pullField=0;
 let score=0, cores=0, chain=0, chainTimer=0, mult=1;
+/* ---- performance grading (#21) ----------------------------------------------
+   The game already tracked everything a grade needs — hits, bombs, graze, peak chain — and
+   surfaced almost none of it, and only on the *death* screen. A fight you survived told you
+   nothing about how well you flew it. Grades are scored per boss and rolled up per sector,
+   and they pay out in score AND in resources, so mastery is mechanical rather than a badge.
+   All timing reads `elapsed` (the sim clock), never wall-clock. */
+let grade = { hits:0, bombs:0, t0:0, graze0:0, label:'' };
+let sectorGrade = -1, peakMult = 1, peakStreak = 0;   /* -1 = no boss fought yet this sector */
+const GRADES = ['S','A','B','C','D'];
+function gradeReset(){ grade = { hits:0, bombs:0, t0:elapsed, graze0:graze, label:'' }; }
+function gradeIndex(){
+  if (grade.hits===0 && grade.bombs===0) return 0;                    /* S — untouched */
+  if (grade.hits===0 || (grade.hits<=1 && grade.bombs===0)) return 1;  /* A */
+  if (grade.hits<=2) return 2;                                        /* B */
+  return grade.hits<=4 ? 3 : 4;                                       /* C / D */
+}
 /* graze — fly close to enemy fire to push the multiplier past the chain's ×8, up to ×16 */
 const GRAZE_R = 16;
 let graze=0, grazeStreak=0, grazeTimer=0, grazeMult=0;
@@ -691,6 +716,7 @@ function startLevelAt(i){
   P.x=W/2; P.y=H*.78; P.tx=P.x; P.ty=P.y;
   chain=0; mult=1; grazeStreak=0; grazeMult=0; grazeTimer=0;
   runScoreBase = score;
+  sectorGrade = -1; peakMult = 1; peakStreak = 0;   /* per-sector rollup */
   showBoss(false);
   refreshHUD(true);
   elSectorTag.textContent = 'Sector ' + (i+1) + ' · ' + L.name;
@@ -802,6 +828,7 @@ function shoot(x,y,a,sp,dmg,pierce){ dmg*=dmgMul; pierce+=pierceBonus;
 }
 function hurtPlayer(){
   if (P.inv>0 || !P.alive || state!=='playing') return;
+  grade.hits++;               /* a shield eaten still counts — an S means untouched */
   if (P.shield>0){
     P.shield--; P.inv=1.1; shake=Math.max(shake,10); Sound.hurt();
     rank = Math.max(0, rank-0.15);
@@ -827,6 +854,7 @@ function hurtPlayer(){
 
 /* --- the bomb: a visible shockwave that sweeps the screen --- */
 function useBomb(){
+  if (state==='playing' && P.alive && P.bombs>0) grade.bombs++;
   if (state!=='playing' || !P.alive) return;
   if (P.bombs<=0){
     elPadBomb.classList.remove('deny'); void elPadBomb.offsetWidth; elPadBomb.classList.add('deny');
@@ -1435,6 +1463,7 @@ function spawnBoss(def){
     gates: def.phaseAt || DEFAULT_PHASES,
     hp:def.hp*scale, max:def.hp*scale, spin:0, timers:{}, vars:{}, parts
   };
+  gradeReset();                 /* the fight is scored from the moment it starts */
   if (def.init) def.init(boss);
   bossMaxHP = boss.max + parts.reduce((s,p)=>s+p.max,0);
   showBoss(true, def.label);
@@ -1542,10 +1571,33 @@ function bossTier(def){
   if (def.final) return (def.reward||0) >= 30000 ? 2 : 1;
   return (def.reward||0) >= 20000 ? 1 : 0;
 }
+/* The grade lines are the reason to watch the death sequence: each one arrives on its own
+   beat, with a rising chime, and the final whiteout reveals the letter. */
+function buildGradeLines(def){
+  const gi = gradeIndex(), base = def.reward||4000, lines = [];
+  if (grade.hits===0)  lines.push(['NO DAMAGE', Math.round(base*.5)]);
+  if (grade.bombs===0) lines.push(['NO BOMB',   Math.round(base*.25)]);
+  /* par derives from the boss's own choreography rather than a hand-tuned table: a fight can
+     never finish faster than one PHASE_MIN per phase, so par is a generous multiple of that
+     floor and stays correct if a boss gains or loses a phase. `def.par` overrides. */
+  const phases = ((def.phaseAt||DEFAULT_PHASES).length + 1);
+  const took = elapsed - grade.t0, par = def.par || phases*PHASE_MIN*1.9;
+  if (took <= par) lines.push([Math.round(took)+'s · UNDER PAR', Math.round(base*.3)]);
+  const gz = graze - grade.graze0;
+  if (gz >= 40) lines.push(['GRAZE ×'+gz, Math.round(base*.2)]);
+  lines.push(['RANK ' + GRADES[gi], 0]);
+  sectorGrade = Math.max(sectorGrade, gi);      /* the sector is only as good as its worst fight */
+  return { lines, gi };
+}
 function beginBossDeath(){
   const b = boss, def = b.def, tier = bossTier(def);
-  b.dying = { t:0, dur:DEATH_DUR[tier], tier, pop:0, pops:DEATH_POPS[tier] };
+  const g = buildGradeLines(def);
+  b.dying = { t:0, dur:DEATH_DUR[tier], tier, pop:0, pops:DEATH_POPS[tier],
+              lines:g.lines, li:0, gi:g.gi };
   b.hp = 0;
+
+  /* an S is worth something you can spend, not just something you can read */
+  if (g.gi === 0){ P.shield = Math.min(P.shieldMax, P.shield+1); refreshHUD(true); }
 
   /* the reward reads like a reward: big, bloomed, and counting up */
   const reward = Math.round((def.reward||4000)*mult);
@@ -1596,6 +1648,26 @@ function updateBossDeath(b,dt){
     Sound.boom(1+d.tier*.15);
     shake = Math.max(shake, 14+d.tier*4);
     d.pop++;
+  }
+
+  /* the tally, one line per beat, each a step higher than the last */
+  const lineGap = d.dur/(d.lines.length+1);
+  while (d.li < d.lines.length && d.t > (d.li+1)*lineGap){
+    const [txt,val] = d.lines[d.li];
+    const isRank = d.li === d.lines.length-1;
+    const y = b.y + 34 + d.li*22;
+    if (val){
+      score += Math.round(val*mult); refreshHUD();
+      floatUp(W/2, y, Math.round(val*mult), PAL.crystal,
+              { size:15, hold:1.5, prefix:txt+'  +', count:false });
+      const f = floats[floats.length-1];
+      f.txt = txt + '  +' + Math.round(val*mult).toLocaleString();
+    } else {
+      floatUp(W/2, y, 0, isRank?PAL.star:PAL.crystal, { size:isRank?26:15, hold:2, count:false });
+      floats[floats.length-1].txt = txt;
+    }
+    Sound.chime(clamp(3 + d.li*2, 0, 11));
+    d.li++;
   }
 
   if (d.t >= d.dur){
@@ -3168,12 +3240,13 @@ LEVELS.push(
 );
 
 /* --- relics are offered on the way into each of the last six sectors --- */
-function offerRelic(proceed){
+function offerRelic(proceed,n){
   const owned = P.relics||{};
   const pool = RELICS.filter(r=>!owned[r.k]);
   if (!pool.length){ proceed(); return; }
+  const want = n||3;                 /* a well-flown sector widens the choice (#21) */
   const pickThree = [];
-  while (pickThree.length<Math.min(3,pool.length)){
+  while (pickThree.length<Math.min(want,pool.length)){
     const r = pick(pool);
     if (pickThree.indexOf(r)<0) pickThree.push(r);
   }
@@ -3300,10 +3373,12 @@ function collectPickup(p){
   spark(p.x,p.y,PAL.crystal);
   refreshHUD();
 }
-function recalcMult(){ mult = Math.min(16, clamp(1+Math.floor(chain/8),1,8) + grazeMult); }
+function recalcMult(){ mult = Math.min(16, clamp(1+Math.floor(chain/8),1,8) + grazeMult);
+  if (mult>peakMult) peakMult = mult; }
 function onGraze(b){
   graze++; grazeStreak++; grazeTimer = 1.5;
   grazeMult = clamp(Math.floor(grazeStreak/10), 0, 8);
+  if (grazeStreak>peakStreak) peakStreak = grazeStreak;
   recalcMult();
   score += 2*mult;
   /* proximity aura (#11): active grazing morphs the cannon wider & heavier */
@@ -4171,7 +4246,11 @@ function screenTitle(){
   const grid = document.createElement('div'); grid.className='secGrid';
   LEVELS.forEach((L,i)=>{
     const b=document.createElement('button'); b.className='sec'; b.setAttribute('aria-pressed', i===pickedSector);
-    b.innerHTML = '<i>'+(i+1)+'</i><span>'+L.name+'</span>';
+    /* the rank you earned here persists — a standing goal to come back and beat (#21) */
+    const g = Best.grades && Best.grades['s'+(i+1)];
+    const rank = (g!==undefined && g>=0)
+      ? '<em style="font-style:normal;color:var(--jade);opacity:.9"> '+GRADES[g]+'</em>' : '';
+    b.innerHTML = '<i>'+(i+1)+rank+'</i><span>'+L.name+'</span>';
     b.onclick=()=>{ pickedSector=i; [...grid.children].forEach(c=>c.setAttribute('aria-pressed','false'));
       b.setAttribute('aria-pressed','true'); Sound.init(); Sound.resume(); Sound.pickup();
       applyPalette(i); Sound.setMode(i); };
@@ -4321,6 +4400,7 @@ function levelClear(){
   elPads.classList.remove('on'); elPause.classList.remove('on');
   Sound.targetIntensity=.25;
   recordRun(score, Math.min(LEVELS.length, levelIdx+2));
+  recordSectorGrade(levelIdx, sectorGrade);
   const t = Math.floor(elapsed/60)+':'+String(Math.floor(elapsed%60)).padStart(2,'0');
   const last6 = levelIdx>=LEVELS.length-1;
   elVeil.classList.remove('off');
@@ -4348,6 +4428,9 @@ function levelClear(){
       <div><span>Score</span><b>${score.toLocaleString()}</b></div>
       <div><span>Cores</span><b>${cores}</b></div>
       <div><span>Time</span><b>${t}</b></div>
+      <div><span>Best chain</span><b>×${peakMult}</b></div>
+      <div><span>Graze</span><b>${graze.toLocaleString()}</b></div>
+      <div><span>Sector rank</span><b style="color:var(--jade)">${sectorGrade>=0?GRADES[sectorGrade]:'—'}</b></div>
     </div>
     <p class="lede">Repairs: <b style="color:var(--jade)">+1 bomb, +1 shield</b>. Your upgrades carry forward.<br><br>
       Ahead — <b style="color:var(--ink)">${next.name}</b>. ${next.sub.split('· ')[1]}.</p>
@@ -4359,7 +4442,7 @@ function levelClear(){
     elVeil.classList.add('off'); elPads.classList.add('on'); elPause.classList.add('on');
     startLevelAt(levelIdx+1); state='playing'; last=performance.now(); Sound.targetIntensity=.3;
   };
-  $('go').onclick = ()=>{ if (levelIdx+1>=6){ ascend(); offerRelic(proceed); } else proceed(); };
+  $('go').onclick = ()=>{ if (levelIdx+1>=6){ ascend(); offerRelic(proceed, sectorGrade>=0 && sectorGrade<=1 ? 4 : 3); } else proceed(); };
   $('menu').onclick = screenTitle;
 }
 
