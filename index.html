@@ -376,7 +376,66 @@ const SKIN = {
       neb:[[236,206,178],[210,226,192],[244,224,198]], star:[255,252,244], foe:[108,182,206],
       foeDark:[52,86,112], ebullet:[86,166,216], elaser:[128,200,234], boss:[74,146,190],
       dust:.42, flash:[255,255,255], void:[142,178,126]
-    }
+    },
+    /* Twelve spreads, one per sector — same key shape as PALETTES, plus `void` for the cloth
+       itself (background, not an entity band, so this does not weaken the invariant).
+
+       HARD COOL BAND: every one of these keeps foe/foeDark/ebullet/elaser/boss inside
+       teal→blue→violet. Space varies enemy hue per sector because its player band is fixed
+       cool; picnic cannot, because its player band is warm and a warm enemy would collide.
+       So sector identity is carried by the CLOTH, the light and the crumb layer instead —
+       which is why the twelve `void`s are far more different from each other than the twelve
+       `foe`s are. Sector 11's cloth is the darkest, so it gets the brightest enemy hue. */
+    sectors:[
+      /* 1 · fresh greens — sage cloth, white gingham */
+      { key:'greens',  void:[150,178,120], neb:[[214,230,196],[236,242,222],[198,220,180]],
+        star:[255,255,240], foe:[138,158,224], foeDark:[46,54,104],
+        ebullet:[110,132,232], elaser:[150,170,245], boss:[120,140,230], dust:.40 },
+      /* 2 · the charcoal grill — smoke over a grey-blue check */
+      { key:'grill',   void:[122,132,138], neb:[[186,196,204],[152,164,176],[204,212,218]],
+        star:[246,250,255], foe:[96,140,190], foeDark:[30,52,80],
+        ebullet:[70,124,190], elaser:[120,172,220], boss:[80,132,196], dust:.58 },
+      /* 3 · jam and preserves — deep plum, cream stripes */
+      { key:'jam',     void:[110,72,104], neb:[[196,166,196],[234,220,214],[172,140,178]],
+        star:[255,238,246], foe:[104,110,196], foeDark:[36,36,86],
+        ebullet:[88,96,208], elaser:[140,146,230], boss:[96,104,200], dust:.50 },
+      /* 4 · the cheese board — wicker tan, waxed cloth */
+      { key:'board',   void:[176,142,96], neb:[[226,206,168],[240,228,198],[210,186,146]],
+        star:[255,250,232], foe:[150,196,226], foeDark:[44,74,98],
+        ebullet:[104,168,214], elaser:[168,212,240], boss:[128,182,220], dust:.42 },
+      /* 5 · seafood on ice — pale aqua, wet white */
+      { key:'ice',     void:[156,196,200], neb:[[214,238,240],[238,248,250],[196,226,232]],
+        star:[255,255,255], foe:[46,150,158], foeDark:[12,58,66],
+        ebullet:[40,158,170], elaser:[110,206,214], boss:[40,140,152], dust:.34 },
+      /* 6 · afternoon tea — cream and faded rose */
+      { key:'tea',     void:[230,200,204], neb:[[250,230,226],[238,200,212],[254,242,234]],
+        star:[255,250,246], foe:[166,150,214], foeDark:[58,48,92],
+        ebullet:[140,120,208], elaser:[186,172,232], boss:[152,134,208], dust:.38 },
+      /* 7 · crumbs after — grey-beige, stained */
+      { key:'crumbs',  void:[154,150,128], neb:[[202,198,176],[170,166,146],[216,212,192]],
+        star:[244,240,230], foe:[126,146,164], foeDark:[40,50,60],
+        ebullet:[92,124,152], elaser:[150,176,196], boss:[108,136,160], dust:.62 },
+      /* 8 · fruit salad — confetti check */
+      { key:'salad',   void:[232,196,204], neb:[[250,226,206],[214,238,224],[246,214,232]],
+        star:[255,255,250], foe:[156,124,214], foeDark:[52,34,88],
+        ebullet:[132,96,208], elaser:[180,150,236], boss:[144,110,208], dust:.36 },
+      /* 9 · lemonade — sun-bleached yellow */
+      { key:'lemonade',void:[232,220,148], neb:[[248,240,196],[252,248,222],[240,230,178]],
+        star:[255,255,238], foe:[104,142,220], foeDark:[32,52,102],
+        ebullet:[80,124,216], elaser:[140,176,240], boss:[92,132,216], dust:.34 },
+      /* 10 · the wicker basket — woven umber */
+      { key:'wicker',  void:[134,92,52], neb:[[192,148,96],[216,180,134],[162,120,76]],
+        star:[250,238,216], foe:[104,110,190], foeDark:[30,32,76],
+        ebullet:[86,92,196], elaser:[136,142,224], boss:[96,102,194], dust:.55 },
+      /* 11 · inside the hamper — dark, warm, close */
+      { key:'hamper',  void:[62,44,32], neb:[[110,80,56],[86,62,44],[132,98,68]],
+        star:[244,224,196], foe:[92,224,236], foeDark:[10,62,72],
+        ebullet:[70,214,232], elaser:[140,240,248], boss:[80,216,232], dust:.70 },
+      /* 12 · sunset picnic — golden dusk, long shadows */
+      { key:'sunset',  void:[196,148,104], neb:[[236,186,132],[210,158,140],[246,212,166]],
+        star:[255,240,214], foe:[118,110,206], foeDark:[34,28,80],
+        ebullet:[96,88,214], elaser:[152,142,238], boss:[110,100,204], dust:.60 }
+    ]
   }
 };
 let skinKey = 'space';
@@ -550,32 +609,304 @@ function blanketPattern(){
   blanketPat = ctx.createPattern(c,'repeat');
   return blanketPat;
 }
+let sunPat = null, sunW = 0, sunH = 0;
 ART.picnic.background = function(dt){
   const pat = blanketPattern();
   ctx.save();
   ctx.translate(0, (scrollY*.5) % 96);
   ctx.fillStyle = pat;
-  ctx.fillRect(0, -96, W, H+192);
+  /* the offset is always inside [0,96), so starting one tile high and painting H+120 covers
+     the viewport with margin to spare. The original H+192 from -96 painted about 1.4 screens
+     of cloth per frame, most of it off the bottom edge and invisible. */
+  ctx.fillRect(0, -96, W, H+120);
   ctx.restore();
-  /* a soft sunlit falloff so the blanket has some depth rather than reading flat */
-  const g = ctx.createRadialGradient(W*.5,H*.18,0, W*.5,H*.18, Math.max(W,H)*.9);
-  g.addColorStop(0,'rgba(255,248,214,.20)'); g.addColorStop(1,'rgba(60,80,50,.22)');
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  /* a soft sunlit falloff so the blanket has some depth rather than reading flat.
+     It depends only on the viewport, so building it per frame was pure waste — a full-screen
+     radial gradient rebuilt 60 times a second was most of picnic's background cost. */
+  if (!sunPat || sunW !== W || sunH !== H){
+    sunW = W; sunH = H;
+    sunPat = ctx.createRadialGradient(W*.5,H*.18,0, W*.5,H*.18, Math.max(W,H)*.9);
+    sunPat.addColorStop(0,'rgba(255,248,214,.20)'); sunPat.addColorStop(1,'rgba(60,80,50,.22)');
+  }
+  ctx.fillStyle=sunPat; ctx.fillRect(0,0,W,H);
 };
 /* crumbs and ants instead of stars — same data, different read */
 ART.picnic.stars = function(dt){
   const spd = state==='playing' ? 1 : .35;
-  for (let l=0;l<3;l++){
-    for (const st of stars[l]){
-      st.y += st.s*dt*spd; if (st.y>H){ st.y=-4; st.x=frnd(0,W); }
-      const crumb = (st.r>1.0);
-      ctx.fillStyle = crumb ? 'rgba(122,86,54,.55)' : rgba(PAL.star,.5);
-      ctx.beginPath();
-      if (crumb) ctx.ellipse(st.x,st.y,st.r*1.5,st.r*1.1,st.tw,0,TAU);
-      else ctx.arc(st.x,st.y,st.r*.8,0,TAU);
-      ctx.fill();
-    }
+  /* Two colours over a few hundred motes, so this batches: advance everything in one pass,
+     then lay down two paths and two fills. Per-mote fillStyle + beginPath meant a colour
+     string built and a path object allocated several hundred times a frame. */
+  ctx.beginPath();
+  for (let l=0;l<3;l++) for (const st of stars[l]){
+    st.y += st.s*dt*spd; if (st.y>H){ st.y=-4; st.x=frnd(0,W); }
+    if (st.r>1.0) continue;
+    ctx.moveTo(st.x+st.r*.8, st.y);
+    ctx.arc(st.x,st.y,st.r*.8,0,TAU);
   }
+  ctx.fillStyle = rgba(PAL.star,.5); ctx.fill();
+
+  ctx.beginPath();
+  for (let l=0;l<3;l++) for (const st of stars[l]){
+    if (st.r<=1.0) continue;
+    /* moveTo first: ellipse() joins to the current point, which would web the crumbs together */
+    ctx.moveTo(st.x+Math.cos(st.tw)*st.r*1.5, st.y+Math.sin(st.tw)*st.r*1.5);
+    ctx.ellipse(st.x,st.y,st.r*1.5,st.r*1.1,st.tw,0,TAU);
+  }
+  ctx.fillStyle = 'rgba(122,86,54,.55)'; ctx.fill();
+};
+
+/* ---- picnic: the hazards ------------------------------------------------------
+   Each of these reads exactly the state its space counterpart reads and draws the same
+   silhouette in the same place, so the tell, the timing and the safe gap are unchanged —
+   only the noun differs. Nothing here may mutate simulation state or draw from the seeded
+   stream: these run on the render path. */
+ART.picnic.hazard = {
+
+  /* 2 · paper plates and pie crusts, tumbling. The scalloped edge follows the same points the
+     space wreck used, so the shape you learn to dodge is the shape that hits you. */
+  wrecks:{ drawBack(){
+    for (const k of this.items){
+      ctx.save(); ctx.translate(k.x,k.y); ctx.rotate(k.rot);
+      ctx.beginPath(); ctx.moveTo(k.pts[0][0],k.pts[0][1]);
+      for (let i=1;i<k.pts.length;i++) ctx.lineTo(k.pts[i][0],k.pts[i][1]);
+      ctx.closePath();
+      const g = ctx.createRadialGradient(-k.sc*.3,-k.sc*.35,k.sc*.1, 0,0,k.sc*1.1);
+      g.addColorStop(0,'rgba(252,246,232,1)'); g.addColorStop(.68,'rgba(238,224,196,1)');
+      g.addColorStop(1,rgba(PAL.foeDark,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.7); ctx.lineWidth=2.5; ctx.stroke();
+      /* the well of the plate */
+      ctx.beginPath(); ctx.arc(0,0,k.sc*.52,0,TAU);
+      ctx.fillStyle='rgba(214,196,166,.5)'; ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.32)'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.restore();
+      addGlow(k.x,k.y,k.sc*.5,PAL.foe,.10);
+    }
+  }},
+
+  /* 3 · shaken fizzy drinks. Dashed bubbles while it builds, a hard spray column when it goes. */
+  columns:{ drawFront(){
+    for (const c of this.cols){
+      if (c.phase==='warn'){
+        const a = .30+Math.sin(c.t*40)*.2;
+        ctx.strokeStyle=rgba(PAL.elaser,a); ctx.lineWidth=2; ctx.setLineDash([4,12]);
+        ctx.beginPath(); ctx.moveTo(c.x,0); ctx.lineTo(c.x,H); ctx.stroke(); ctx.setLineDash([]);
+        /* bubbles gathering — decoration, so it is the first thing to go on a weak device */
+        if (qLevel >= 1){
+          ctx.fillStyle=rgba(PAL.elaser,a*.9);
+          for (let i=0;i<7;i++){ const y=(c.t*220+i*97)%H;
+            ctx.beginPath(); ctx.arc(c.x+Math.sin(y*.05+i)*7, y, 1.5+ (i%3), 0, TAU); ctx.fill(); }
+        }
+      } else if (c.phase==='fire'){
+        const g = ctx.createLinearGradient(c.x-30,0,c.x+30,0);
+        g.addColorStop(0,rgba(PAL.elaser,0)); g.addColorStop(.5,rgba(PAL.elaser,.8)); g.addColorStop(1,rgba(PAL.elaser,0));
+        ctx.fillStyle=g; ctx.fillRect(c.x-30,0,60,H);
+        ctx.fillStyle='rgba(255,255,255,.78)'; ctx.fillRect(c.x-4,0,8,H);
+        /* froth riding the jet — the column itself is the tell, so this thins rather than
+           disappears: the player must still read the jet at every quality level */
+        const n = qLevel>=2 ? 14 : qLevel===1 ? 7 : 0;
+        ctx.fillStyle='rgba(255,255,255,.5)';
+        for (let i=0;i<n;i++){ const y=(c.t*760+i*61)%H, r=2+((i*7)%4);
+          ctx.beginPath(); ctx.arc(c.x+Math.sin(y*.09+i)*14, y, r, 0, TAU); ctx.fill(); }
+        addGlow(c.x,H*.5,80,PAL.elaser,.45);
+      }
+    }
+  }},
+
+  /* 4 · striped paper straws spinning between two cups */
+  beams:{ drawBack(){
+    for (const b of this.bars){
+      const cx=W/2, cy=b.y, dx=Math.cos(b.a)*b.len, dy=Math.sin(b.a)*b.len;
+      ctx.save(); ctx.translate(cx,cy); ctx.rotate(b.a);
+      ctx.lineCap='round';
+      ctx.strokeStyle=rgba(PAL.foeDark,.5); ctx.lineWidth=9;
+      ctx.beginPath(); ctx.moveTo(-b.len,2.5); ctx.lineTo(b.len,2.5); ctx.stroke();
+      ctx.strokeStyle='rgba(252,248,240,.96)'; ctx.lineWidth=8;
+      ctx.beginPath(); ctx.moveTo(-b.len,0); ctx.lineTo(b.len,0); ctx.stroke();
+      /* the stripes — the wrap is what makes it read as a straw rather than a rod */
+      ctx.strokeStyle=rgba(PAL.elaser,.95); ctx.lineWidth=4;
+      for (let x=-b.len; x<b.len; x+=16){
+        ctx.beginPath(); ctx.moveTo(x,-4); ctx.lineTo(x+7,4); ctx.stroke();
+      }
+      ctx.lineCap='butt'; ctx.restore();
+      /* the cups it is strung between */
+      for (const s of [-1,1]){
+        const ex=cx+dx*s, ey=cy+dy*s;
+        ctx.save(); ctx.translate(ex,ey);
+        ctx.beginPath(); ctx.moveTo(-11,-11); ctx.lineTo(9,-11); ctx.lineTo(6,11); ctx.lineTo(-8,11); ctx.closePath();
+        const g=ctx.createLinearGradient(-11,0,9,0);
+        g.addColorStop(0,rgba(PAL.foe,1)); g.addColorStop(1,rgba(PAL.foeDark,1));
+        ctx.fillStyle=g; ctx.fill();
+        ctx.fillStyle='rgba(255,255,255,.30)'; ctx.fillRect(-9,-9,4,18);
+        ctx.restore();
+        addGlow(ex,ey,18,PAL.elaser,.4);
+      }
+    }
+  }},
+
+  /* 5 · dusk falls on the picnic and the bottle becomes the only lantern */
+  dark:{
+    drawBack(){
+      for (const m of this.motes){
+        /* pollen drifting in the last light */
+        ctx.fillStyle=rgba(PAL.star,.18+Math.sin(m.tw)*.14);
+        ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,TAU); ctx.fill();
+      }
+    },
+    drawFront(){
+      const lit = 138 + P.mods.power*9 + (P.shield>0?26:0);
+      const g = ctx.createRadialGradient(P.x,P.y,lit*.42,P.x,P.y,lit*2.5);
+      /* warm dusk rather than cold void — the shape and radius are identical */
+      g.addColorStop(0,'rgba(28,20,14,0)');
+      g.addColorStop(.55,'rgba(30,22,16,.70)');
+      g.addColorStop(1,'rgba(22,16,12,.93)');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      /* the lantern's own warm pool, so the light reads as coming from the bottle */
+      if (qLevel >= 1){
+        const w = ctx.createRadialGradient(P.x,P.y,0,P.x,P.y,lit*.9);
+        w.addColorStop(0,'rgba(255,214,150,.16)'); w.addColorStop(1,'rgba(255,214,150,0)');
+        ctx.fillStyle=w; ctx.fillRect(0,0,W,H);
+      }
+    }
+  },
+
+  /* 7 · a gust takes the napkins and the dandelion fluff with it */
+  ashwind:{ drawFront(){
+    const gu = this.gust;
+    for (const m of this.motes){
+      if (m.r > 2.1){
+        /* a napkin: it streaks with the gust, which is the tell for which way you're being shoved */
+        ctx.fillStyle='rgba(252,246,236,'+(.16+gu*.5)+')';
+        ctx.save(); ctx.translate(m.x,m.y); ctx.rotate(this.dir*gu*.7);
+        ctx.fillRect(0,0,m.r*(1+gu*5), m.r*2.2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle=rgba(PAL.star,.20+gu*.4);
+        ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,TAU); ctx.fill();
+      }
+    }
+    if (gu>.02){
+      /* dust kicked off the blanket, warm not smoky */
+      ctx.fillStyle='rgba(190,168,132,'+(gu*.26)+')'; ctx.fillRect(0,0,W,H);
+    }
+  }},
+
+  /* 8 · celery and asparagus growing in from both edges */
+  coral:{ drawBack(){
+    for (const sp of this.spurs){
+      const x0 = sp.side? W : 0, dir = sp.side? -1 : 1;
+      ctx.save(); ctx.translate(x0,sp.y);
+      ctx.beginPath(); ctx.moveTo(0,-13);
+      ctx.quadraticCurveTo(dir*sp.len*.6,-9, dir*sp.len,0);
+      ctx.quadraticCurveTo(dir*sp.len*.6,9, 0,13); ctx.closePath();
+      const g = ctx.createLinearGradient(0,-13,0,13);
+      g.addColorStop(0,rgba(PAL.foe,1)); g.addColorStop(.5,'rgba(206,226,180,1)'); g.addColorStop(1,rgba(PAL.foeDark,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foeDark,.7); ctx.lineWidth=2; ctx.stroke();
+      /* the ribs of the stalk */
+      ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=1.5;
+      for (const o of [-6,0,6]){
+        ctx.beginPath(); ctx.moveTo(dir*4,o); ctx.lineTo(dir*(sp.len-4),o*.35); ctx.stroke();
+      }
+      /* the tip, where the bud is */
+      ctx.beginPath(); ctx.ellipse(dir*sp.len,0,7,9,0,0,TAU);
+      ctx.fillStyle=rgba(PAL.elaser,.9); ctx.fill();
+      ctx.restore();
+      addGlow(x0+dir*sp.len,sp.y,24,PAL.foe,.4);
+    }
+  }},
+
+  /* 9 · waves of spilled lemonade rolling down, one dry gap in each */
+  resonance:{ drawFront(){
+    for (const w of this.waves){
+      for (const seg of [[0,w.gap-w.gw],[w.gap+w.gw,W]]){
+        const x0=seg[0], x1=seg[1];
+        if (x1<=x0) continue;
+        const g = ctx.createLinearGradient(0,w.y-9,0,w.y+9);
+        g.addColorStop(0,rgba(PAL.elaser,0)); g.addColorStop(.5,rgba(PAL.elaser,.8)); g.addColorStop(1,rgba(PAL.elaser,0));
+        ctx.fillStyle=g; ctx.fillRect(x0,w.y-9,x1-x0,18);
+        /* the leading edge, foamed — this is the line you actually read */
+        ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=2;
+        ctx.beginPath();
+        for (let x=x0; x<=x1; x+=12) ctx.lineTo(x, w.y-3+Math.sin(x*.09+w.y*.05)*2.2);
+        ctx.stroke();
+      }
+      addGlow(w.gap-w.gw,w.y,28,PAL.elaser,.45); addGlow(w.gap+w.gw,w.y,28,PAL.elaser,.45);
+    }
+  }},
+
+  /* 10 · syrup spreading on the cloth, and it pulls */
+  wells:{ drawBack(){
+    for (const w of this.items){
+      ctx.save();
+      /* the puddle body — darkest at the centre, which is where the pull is strongest */
+      const g = ctx.createRadialGradient(w.x,w.y,0,w.x,w.y,w.r);
+      g.addColorStop(0,rgba(PAL.boss,.42)); g.addColorStop(.6,rgba(PAL.boss,.16)); g.addColorStop(1,rgba(PAL.boss,0));
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(w.x,w.y,w.r,0,TAU); ctx.fill();
+      /* spreading rims */
+      for (let i=1;i<=4;i++){
+        ctx.strokeStyle=rgba(PAL.elaser,.10*i);
+        ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(w.x,w.y,w.r*i/4 + Math.sin(w.p*3+i)*4,0,TAU); ctx.stroke();
+      }
+      /* the swirl, turning the way the well turns */
+      ctx.strokeStyle=rgba(PAL.boss,.35); ctx.lineWidth=3; ctx.beginPath();
+      for (let t=0;t<7;t+=.12){
+        const a=t*1.4 + w.p*w.s*2, rr=t*w.r*.055;
+        const x=w.x+Math.cos(a)*rr, y=w.y+Math.sin(a)*rr;
+        t?ctx.lineTo(x,y):ctx.moveTo(x,y);
+      }
+      ctx.stroke();
+      ctx.restore();
+      addGlow(w.x,w.y,50,PAL.boss,.22);
+    }
+  }},
+
+  /* 11 · the hamper lid closing on you from both sides */
+  systole:{ drawFront(){
+    const band = (this.squeeze||0) * W*.3;
+    if (band<1) return;
+    for (const s of [0,1]){
+      ctx.save();
+      if (s){ ctx.translate(W,0); ctx.scale(-1,1); }
+      const g = ctx.createLinearGradient(0,0,band,0);
+      g.addColorStop(0,rgba(PAL.foeDark,.95)); g.addColorStop(.72,rgba(PAL.ebullet,.5)); g.addColorStop(1,rgba(PAL.ebullet,0));
+      ctx.fillStyle=g; ctx.fillRect(0,0,band,H);
+      /* wicker weave on the advancing wall, so the squeeze reads as a lid and not a fog */
+      ctx.strokeStyle='rgba(255,255,255,.14)'; ctx.lineWidth=2;
+      for (let y=0;y<H;y+=18){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(band,y+6); ctx.stroke(); }
+      /* the hard edge — the thing that actually hurts */
+      ctx.fillStyle='rgba(255,255,255,.5)'; ctx.fillRect(band-2,0,2,H);
+      ctx.restore();
+    }
+  }},
+
+  /* 12 · cutlery, and it bounces whatever hits it */
+  shards:{ drawBack(){
+    for (const k of this.items){
+      ctx.save(); ctx.translate(k.x,k.y); ctx.rotate(k.a);
+      const L=k.len*.5;
+      /* handle */
+      ctx.beginPath(); ctx.roundRect(-L,-3.5,L*.7,7,3);
+      ctx.fillStyle=rgba(PAL.foeDark,1); ctx.fill();
+      /* blade */
+      ctx.beginPath();
+      ctx.moveTo(-L*.3,-4.5); ctx.lineTo(L*.85,-3.2);
+      ctx.quadraticCurveTo(L,0, L*.85,3.8); ctx.lineTo(-L*.3,4.5); ctx.closePath();
+      const g = ctx.createLinearGradient(0,-5,0,5);
+      g.addColorStop(0,rgba(PAL.elaser,1)); g.addColorStop(.45,'rgba(255,255,255,1)'); g.addColorStop(1,rgba(PAL.foe,1));
+      ctx.fillStyle=g; ctx.fill();
+      /* the specular travelling along the blade — the cue that this thing reflects */
+      if (qLevel >= 1){
+        const t = (k.a*3)%1;
+        ctx.fillStyle='rgba(255,255,255,.8)';
+        ctx.fillRect(-L*.3 + t*L*1.1, -4, 5, 8);
+      }
+      ctx.strokeStyle=rgba(PAL.foeDark,.45); ctx.lineWidth=1; ctx.stroke();
+      ctx.restore();
+      addGlow(k.x,k.y,k.len*.4,PAL.elaser,.22);
+    }
+  }}
 };
 
 function applySkin(key){
@@ -586,6 +917,7 @@ function applySkin(key){
   const css = SKIN_CSS[key], root = document.documentElement;
   for (const k in css) root.style.setProperty('--'+k, css[k]);
   spriteCache.clear(); blanketPat = null;   /* both are baked per skin */
+  skinHazard(hazard);                        /* re-point the drawing, keep the hazard's state */
   /* applyPalette above already rebuilt the nebula and starfield, and nothing else here
      is baked at boot — so this is safe to call mid-fight */
 }
@@ -596,7 +928,15 @@ function applyPalette(i){
   const p = (sk.sectors && sk.sectors[i]) || (skinKey==='space' ? PALETTES[i] : sk.pal);
   PAL.neb=p.neb; PAL.star=p.star; PAL.foe=p.foe; PAL.foeDark=p.foeDark;
   PAL.ebullet=p.ebullet; PAL.elaser=p.elaser; PAL.boss=p.boss; PAL.dust=p.dust;
+  /* `void` is optional and background-only — space's twelve don't set it, picnic's twelve do,
+     because the cloth is where picnic carries its sector identity. */
+  if (p.void) PAL.void = p.void; else PAL.void = sk.pal.void;
   buildNebula(); buildStars();
+  /* Both of these bake the palette in, and until now only applySkin cleared them — so every
+     sector after the first kept sector one's cloth and sector one's sprite shading. Harmless
+     while the cache held one ship; wrong the moment 21 enemies land in it. Sector changes
+     happen twelve times a run, so rebuilding is free. */
+  blanketPat = null; spriteCache.clear();
 }
 
 /* ============================================================
@@ -972,7 +1312,7 @@ function startLevelAt(i){
   debris.length = 0;
   groundActive = false; groundReveal = 0; scrollGround = 0; groundHold = 0;
   const L = LEVELS[i];
-  hazard = L.hazard ? HAZARDS[L.hazard]() : null;
+  hazard = makeHazard(L.hazard);
   step=0; waitTime=0; waitClear=false; gateType=null; gateN=-1; gateT=0; elapsed=0; checkpoint=null;
   lastBeat=-1; beatCount=0;                     /* restart the beat clock with the sector */
   P.alive = true; P.inv = 2;
@@ -2692,6 +3032,30 @@ function updateGroups(dt){
    ============================================================ */
 let hazard = null;
 
+/* A skin may restyle a hazard, but only its two DRAW hooks are overridable — `update` holds the
+   collision, the shoves and the bullet deflection, and it is structurally out of a skin's reach.
+   "A skin changes nothing about gameplay" is enforced here by the shape of the override rather
+   than by remembering to be careful. A hazard with no art for the current skin keeps its
+   original drawing in that skin's colours, exactly as entities do.
+
+   The original hooks are stashed on first skinning, so switching skin mid-fight re-points the
+   drawing without rebuilding the hazard — a rebuild would reset the columns' phase and the
+   coral's growth, which is state the player is reading. */
+function skinHazard(h){
+  if (!h) return h;
+  if (!h._draw0) h._draw0 = { back:h.drawBack, front:h.drawFront };
+  const a = art('hazard', h._key);
+  h.drawBack  = (a && a.drawBack)  || h._draw0.back;
+  h.drawFront = (a && a.drawFront) || h._draw0.front;
+  return h;
+}
+function makeHazard(key){
+  if (!key) return null;
+  const h = HAZARDS[key]();
+  h._key = key;
+  return skinHazard(h);
+}
+
 /* ============================================================
    ·· CAMPAIGN TWO — sectors seven through twelve ··
    ============================================================ */
@@ -3942,7 +4306,7 @@ function loadCheckpoint(){
   levelIdx = c.level;
   clearField(); showBoss(false);
   applyPalette(levelIdx); computeTiers(); Sound.setMode(levelIdx);
-  hazard = LEVELS[levelIdx].hazard ? HAZARDS[LEVELS[levelIdx].hazard]() : null;
+  hazard = makeHazard(LEVELS[levelIdx].hazard);
   step = c.step; waitTime = 1.2; waitClear = false; gateType = null; gateN = -1; gateT = 0;
   score = c.score; cores = c.cores;
   P.lives = Math.max(1,c.lives); P.bombs = Math.max(1,c.bombs); P.shield = c.shield;
