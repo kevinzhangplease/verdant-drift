@@ -117,8 +117,9 @@ where a player colour had leaked into enemy art; that must not regress.)
 | S4a blanket | shipped `952eb2e` — gingham background, crumbs/ants |
 | S0 determinism | shipped `e11bf77` — root cause found and fixed; see below |
 | S4b spreads & hazards | shipped `36c81bd` — 12 picnic sectors, 10 hazards, hard cool band |
-| S5 | **next** — 21 common enemies as food, in two batches |
-| S6 / S7 | 24 bosses · audio |
+| S5 enemies | shipped `33e7dbc` — all 19 types as food, cool-band roster |
+| S6 | **next** — 24 bosses as food, four batches of six |
+| S7 | audio: sound bank split and the 12-sector picnic score |
 
 ### S0 — the determinism hunt (resolved)
 
@@ -226,12 +227,19 @@ alongside difficulty and speed with a defensive default.
 **Player** — ketchup bottle (squeeze-deform on fire), ketchup-blob shots, mayonnaise homing bits,
 mustard drones, a gingham reticle, crumbs for the thruster trail.
 
-**Enemies** — mapped by silhouette, not by name: drifter → cherry tomato · weaver → prawn ·
-lancer → cocktail stick · turret → pork pie · sentry → jam tart · hauler → picnic hamper ·
-scavver → wasp · cinder → egg that splits into two halves · ember → pickle slice · blinker →
-jelly cube · prism → cheese wedge (its shield is the rind) · shoal → grapes on a stem · angler →
-lobster · wisp → dandelion seed · polyp → strawberry (the motes it sheds are seeds) · chorister →
-lemon slice · warp → fly · pulsar → boiled egg · mote → sesame seed.
+**Enemies** *(shipped — this list is the one that landed, not the original)*. The first roster
+here was cherry tomato, prawn, lobster, lemon slice and so on: written before picnic committed
+to a hard cool band, and every one of those foods sits in the *player's* band. Recolouring them
+blue would fight the subject, so the roster was rechosen around food that is naturally cool:
+
+drifter → blueberry · weaver → blue corn chip · lancer → purple carrot · turret → blueberry
+muffin · sentry → red cabbage (its arcs were always concentric) · hauler → cool-box · scavver →
+bluebottle · cinder → iced star biscuit · ember → loose blueberry · blinker → jelly cube ·
+prism → blue cheese (the rind is the shield) · shoal → grape · angler → mussel with a pearl
+lure · wisp → thistledown · polyp → artichoke · chorister → red onion (rings, for a thing that
+sings in rings) · warp → moth · pulsar → blueberry macaron · mote → poppy seed.
+
+**Rule for S6:** pick the food to fit the band, never the band to fit the food.
 
 **Bosses** (24, staged) — warden → watermelon with a rind plate · bloom → flower cake · scrapjaw →
 nutcracker · cairn → layer cake whose tiers you knock off · medusa → jellyfish-mould jelly ·
@@ -259,7 +267,9 @@ Each stage is independently shippable and leaves the game playable.
    Picnic is selectable and recolours the world, still using space silhouettes via fallback.
 3. **Sprite cache + shared semi-3D helpers**, then the **player**, bullets, pickups and particles.
 4. **Background & hazards** — blanket, crumbs, grass, the 12 sector variants.
-5. **Common enemies** — all 21, in two batches.
+5. **Common enemies** — all of them. Note the count is **19**, not the 21 this plan said:
+   `TYPES` holds 13 campaign-one types and 6 campaign-two. `dwBunker` and `dwPylon` are boss
+   *parts*, which is where the extra two came from.
 6. **Bosses** — 24 in four batches of six, campaign one first (it is the more distinctive art).
 7. **Audio** — sound bank split, picnic SFX, then the 12-sector picnic score.
 
