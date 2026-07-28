@@ -715,7 +715,7 @@ function startLevelAt(i){
   groundActive = false; groundReveal = 0; scrollGround = 0; groundHold = 0;
   const L = LEVELS[i];
   hazard = L.hazard ? HAZARDS[L.hazard]() : null;
-  step=0; waitTime=0; waitClear=false; elapsed=0; checkpoint=null;
+  step=0; waitTime=0; waitClear=false; gateType=null; gateN=-1; gateT=0; elapsed=0; checkpoint=null;
   lastBeat=-1; beatCount=0;                     /* restart the beat clock with the sector */
   P.alive = true; P.inv = 2;
   P.x=W/2; P.y=H*.78; P.tx=P.x; P.ty=P.y;
@@ -3146,7 +3146,7 @@ const LEVELS = [
   { clear:true },
   { banner:{t:'Warden',s:'Gate keeper inbound'} }, { wait:1.9 },
   { spawn:B('warden') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.35,H*.4,'bomb'); dropPickup(W*.65,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.6 },
   { spawn:()=>{ row('drifter',5); arcRow('weaver',3); } }, { wait:4.2 },
   { spawn:()=>lancers(rint(3,4)) }, { wait:4.0 },
@@ -3169,13 +3169,17 @@ const LEVELS = [
   { spawn:()=>{ scavvers(3); row('drifter',3); } }, { wait:4.2 },
   { spawn:()=>lancers(3) }, { wait:3.4 },
   { spawn:()=>{ spawnGround('pylon',W*.5); groundLine('bunker',1); } }, { wait:5.0 },
-  { spawn:()=>{ spawnEnemy('hauler',W*.28,-60,{holdY:H*.14}); spawnEnemy('hauler',W*.72,-90,{holdY:H*.2}); } }, { wait:5.6 },
+  /* escort — the sentries sit inside the haulers' shields; kill the anchors or waste the damage */
+  { spawn:()=>{ const a=spawnEnemy('hauler',W*.28,-60,{holdY:H*.14});
+                spawnEnemy('sentry',W*.28,-110,{holdY:H*.2});
+                spawnEnemy('hauler',W*.72,-90,{holdY:H*.2}); a.drop='spread'; } },
+  { until:{type:'hauler'} }, { wait:2.2 },
   { spawn:()=>{ scavvers(4); spawnEnemy('turret',W/2,-40,{holdY:H*.18}); } }, { wait:5.0 },
   { spawn:()=>{ const e=spawnEnemy('sentry',W*.5,-70,{holdY:H*.2}); e.drop='rapid'; row('weaver',3); } },
   { clear:true },
   { banner:{t:'Scrapjaw',s:'Salvage rig · it wants your hull'} }, { wait:2.0 },
   { spawn:B('scrapjaw') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.32,H*.4,'bomb'); dropPickup(W*.68,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ scavvers(4); lancers(2); } }, { wait:4.2 },
   { spawn:()=>{ spawnEnemy('hauler',W*.3,-60,{holdY:H*.16}); spawnEnemy('hauler',W*.7,-60,{holdY:H*.16}); scavvers(2); } }, { wait:6.0 },
@@ -3199,7 +3203,7 @@ const LEVELS = [
   { clear:true },
   { banner:{t:'Forge Twins',s:'The tether between them will kill you'} }, { wait:2.2 },
   { spawn:B('forgetwin') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.32,H*.4,'bomb'); dropPickup(W*.68,H*.4,'power'); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ row('cinder',5); for (let i=0;i<4;i++) spawnEnemy('ember',rnd(W*.2,W*.8),-30,{}); } }, { wait:4.6 },
   { spawn:()=>{ vee('weaver',6); lancers(3); } }, { wait:4.4 },
@@ -3227,7 +3231,7 @@ const LEVELS = [
   { clear:true },
   { banner:{t:'Node Sovereign',s:'Cut the links before the core'} }, { wait:2.2 },
   { spawn:B('sovereign') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.32,H*.4,'bomb'); dropPickup(W*.68,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ row('prism',3,{holdY:H*.15}); for (let i=0;i<3;i++) spawnEnemy('blinker',rnd(W*.2,W*.8),-30,{holdY:H*.24}); } }, { wait:5.4 },
   { spawn:()=>{ vee('drifter',8); lancers(3); } }, { wait:4.4 },
@@ -3252,7 +3256,7 @@ const LEVELS = [
   { clear:true },
   { banner:{t:'Pale Lantern',s:'Kill the light first'} }, { wait:2.2 },
   { spawn:B('lantern') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.32,H*.4,'bomb'); dropPickup(W*.68,H*.4,'power'); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ spawnShoal(12); spawnEnemy('angler',W*.4,-60,{holdY:H*.18}); } }, { wait:5.2 },
   { spawn:()=>{ lancers(4); spawnShoal(9); } }, { wait:4.6 },
@@ -3276,8 +3280,7 @@ const LEVELS = [
   { clear:true },
   { banner:{t:'Three Echoes',s:'They remember every sector'} }, { wait:2.4 },
   { spawn:B('gauntlet') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.3,H*.4,'bomb'); dropPickup(W*.7,H*.4,'power');
-                dropPickup(W*.5,H*.5,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.6 },
   { spawn:()=>{ scavvers(4); row('cinder',5); } }, { wait:4.6 },
   { spawn:()=>{ spawnShoal(12); for (let i=0;i<3;i++) spawnEnemy('blinker',rnd(W*.2,W*.8),-30,{holdY:H*.22}); } }, { wait:5.0 },
@@ -3310,7 +3313,7 @@ LEVELS.push(
   { spawn:()=>{ const e=spawnEnemy('sentry',W/2,-60,{holdY:H*.2}); e.drop='rapid'; sideRow(4); lancers(2); } },
   { clear:true }, { banner:{t:'Harrow',s:'It rakes the ash for hulls'} }, { wait:2 },
   { spawn:B('harrow') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.33,H*.4,'bomb'); dropPickup(W*.67,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ row('wisp',6); sideRow(4); } }, { wait:4.2 },
   { spawn:()=>{ vee('drifter',8); lancers(4); } }, { wait:4.4 },
@@ -3326,14 +3329,16 @@ LEVELS.push(
   { spawn:()=>row('mote',5) }, { wait:3 },
   { spawn:()=>{ const e=spawnEnemy('polyp',W*.35,-60,{holdY:H*.16}); e.drop='power'; } }, { wait:3.6 },
   { teach:['polyp','<b>Polyps seed motes</b> forever. Kill the polyp, not the swarm.'] },
-  { spawn:()=>{ row('weaver',4); spawnEnemy('polyp',W*.7,-60,{holdY:H*.2}); } }, { wait:4.6 },
+  /* priority gate — the polyp breeds until you go and kill it, so chaff can't be farmed forever */
+  { spawn:()=>{ row('weaver',4); spawnEnemy('polyp',W*.7,-60,{holdY:H*.2}); } },
+  { until:{type:'polyp'} }, { wait:1.8 },
   { spawn:()=>{ vee('mote',7); lancers(3); } }, { wait:4.2 },
   { spawn:()=>{ const e=spawnEnemy('angler',W*.3,-60,{holdY:H*.17}); e.drop='homing';
                 spawnEnemy('polyp',W*.68,-100,{holdY:H*.22}); } }, { wait:5.4 },
   { spawn:()=>{ row('weaver',5); row('mote',5); } },
   { clear:true }, { banner:{t:'Bract',s:'The fan opens'} }, { wait:2 },
   { spawn:B('bract') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.33,H*.4,'power'); dropPickup(W*.67,H*.4,'bomb'); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ spawnEnemy('polyp',W*.25,-60,{holdY:H*.14}); spawnEnemy('polyp',W*.75,-60,{holdY:H*.14}); row('mote',6); } }, { wait:5 },
   { spawn:()=>{ vee('weaver',7); lancers(3); } }, { wait:4.4 },
@@ -3356,7 +3361,7 @@ LEVELS.push(
                 const f=spawnEnemy('sentry',W*.68,-100,{holdY:H*.23}); f.drop='rapid'; } },
   { clear:true }, { banner:{t:'Cantor',s:'It sets the tempo'} }, { wait:2 },
   { spawn:B('cantor') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.33,H*.4,'bomb'); dropPickup(W*.67,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ row('chorister',5); row('cinder',4); } }, { wait:4.6 },
   { spawn:()=>{ for (let i=0;i<4;i++) spawnEnemy('blinker',rnd(W*.15,W*.85),H*.22,{}); lancers(3); } }, { wait:4.6 },
@@ -3379,7 +3384,7 @@ LEVELS.push(
                 for (let i=0;i<3;i++) spawnEnemy('warp',rnd(W*.2,W*.8),H*.2,{}); } },
   { clear:true }, { banner:{t:'Loom',s:'It is threading the room'} }, { wait:2 },
   { spawn:B('loom') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.33,H*.4,'power'); dropPickup(W*.67,H*.4,'bomb'); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ for (let i=0;i<4;i++) spawnEnemy('warp',rnd(W*.15,W*.85),H*.22,{}); row('drifter',5); } }, { wait:4.6 },
   { spawn:()=>{ spawnEnemy('prism',W*.22,-50,{holdY:H*.14}); spawnEnemy('prism',W*.5,-90,{holdY:H*.2});
@@ -3387,7 +3392,9 @@ LEVELS.push(
   { spawn:()=>{ const e=spawnEnemy('hauler',W*.3,-60,{holdY:H*.16}); e.drop='drones';
                 const f=spawnEnemy('hauler',W*.7,-110,{holdY:H*.22}); f.drop='spread';
                 for (let i=0;i<3;i++) spawnEnemy('warp',rnd(W*.2,W*.8),H*.24,{}); } }, { wait:5.6 },
+  /* the warps flank and snipe — clear them before the drifters box you in */
   { spawn:()=>{ vee('drifter',9); for (let i=0;i<4;i++) spawnEnemy('warp',rnd(W*.2,W*.8),H*.2,{}); } },
+  { until:{type:'warp'} }, { wait:1.6 },
   { clear:true }, { banner:{t:'Reflection',s:'It has been learning how you fly'} }, { wait:2.6 },
   { spawn:B('reflection') }, { clear:true }, { wait:1.4 }, { end:true }
 ]},
@@ -3403,7 +3410,7 @@ LEVELS.push(
   { spawn:()=>{ vee('pulsar',5); row('mote',6); } },
   { clear:true }, { banner:{t:'Valve',s:'It only opens on the beat'} }, { wait:2 },
   { spawn:B('valve') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.33,H*.4,'bomb'); dropPickup(W*.67,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.4 },
   { spawn:()=>{ row('pulsar',5); row('mote',8); } }, { wait:5 },
   { spawn:()=>{ arcRow('cinder',5); lancers(4); } }, { wait:4.6 },
@@ -3424,8 +3431,7 @@ LEVELS.push(
   { spawn:()=>{ vee('cinder',8); sideRow(4); for (let i=0;i<3;i++) spawnEnemy('warp',rnd(W*.2,W*.8),H*.22,{}); } },
   { clear:true }, { banner:{t:'Keeper',s:'Six bolts hold the door'} }, { wait:2.2 },
   { spawn:B('keeper') }, { clear:true }, { checkpoint:true },
-  { spawn:()=>{ dropPickup(W/2,H*.4,'shield'); dropPickup(W*.28,H*.4,'bomb'); dropPickup(W*.5,H*.44,'power');
-                dropPickup(W*.72,H*.4,rollMod()); } },
+  { spawn:()=>reliefDrop() },
   { wait:3.6 },
   { spawn:()=>{ row('chorister',5); row('pulsar',4); } }, { wait:5 },
   { spawn:()=>{ const e=spawnEnemy('angler',W*.3,-60,{holdY:H*.16}); e.drop='homing';
@@ -3471,18 +3477,62 @@ function offerRelic(proceed,n){
 }
 
 let step=0, waitTime=0, waitClear=false;
+/* ---- encounter gates (#21) ---------------------------------------------------
+   `{clear:true}` is binary: one stray drifter drifting down the far edge stalls the whole
+   sector. Two softer gates turn a timed spawn list into encounters that pose a question.
+     {until:{type:'polyp'}}  hold until every one of a type is dead — makes a priority target
+                             an actual gate, so you cannot simply turtle past it
+     {threat:n}              hold until the field thins to n — pace, without the full stall
+     {mark:'name'}           grading segment boundary (stage 3)
+   Every gate carries a timeout. A gate that can never open is a soft-locked run, and the ways
+   to reach one are real: a bomb clears the gating type, or it drifts off the bottom of the
+   screen before you ever see it. */
+let gateType = null, gateN = -1, gateT = 0;
+const GATE_MAX = 26;
+function gateOpen(dt){
+  gateT += dt;
+  if (gateT > GATE_MAX) return true;              /* never let a run soft-lock on a gate */
+  if (gateType){
+    for (const e of enemies) if (e.type === gateType) return false;
+    return true;
+  }
+  if (gateN >= 0) return enemies.length <= gateN && !boss;
+  return true;
+}
 function runLevelScript(dt){
   const SCRIPT = LEVELS[levelIdx].script;
   if (waitTime>0){ waitTime -= dt; return; }
   if (waitClear){ if (enemies.length || boss) return; waitClear = false; }
+  if (gateType || gateN>=0){
+    if (!gateOpen(dt)) return;
+    gateType = null; gateN = -1;
+  }
   while (step < SCRIPT.length){
     const s = SCRIPT[step++];
     if (s.wait !== undefined){ waitTime = s.wait; return; }
     if (s.clear){ waitClear = true; return; }
+    if (s.until){ gateType = s.until.type; gateT = 0; return; }
+    if (s.threat !== undefined){ gateN = s.threat; gateT = 0; return; }
+    if (s.mark){ gradeReset(); continue; }
     if (s.banner){ showBanner(s.banner.t, s.banner.s); continue; }
     if (s.spawn){ s.spawn(); continue; }
     if (s.checkpoint){ saveCheckpoint(); continue; }
     if (s.end){ levelClear(); return; }
+  }
+}
+/* The post-checkpoint relief drop was copy-pasted identically twelve times. One helper, and it
+   now reads the room: a sector you are struggling through hands you more, a sector you are
+   dismantling hands you less. That closes the grading loop into moment-to-moment resources
+   instead of leaving the grade as a letter on a screen. */
+function reliefDrop(){
+  const struggling = sectorGrade >= 2 || P.lives <= 1;
+  const cruising   = sectorGrade === 0 && P.lives >= 3;
+  dropPickup(W/2,  H*.4, 'shield');
+  dropPickup(W*.32,H*.4, 'bomb');
+  dropPickup(W*.68,H*.4, cruising ? rollMod() : 'power');
+  if (struggling){
+    dropPickup(W*.5, H*.46, 'shield');
+    dropPickup(W*.2, H*.44, rollMod());
   }
 }
 function saveCheckpoint(){
@@ -3496,7 +3546,7 @@ function loadCheckpoint(){
   clearField(); showBoss(false);
   applyPalette(levelIdx); computeTiers(); Sound.setMode(levelIdx);
   hazard = LEVELS[levelIdx].hazard ? HAZARDS[LEVELS[levelIdx].hazard]() : null;
-  step = c.step; waitTime = 1.2; waitClear = false;
+  step = c.step; waitTime = 1.2; waitClear = false; gateType = null; gateN = -1; gateT = 0;
   score = c.score; cores = c.cores;
   P.lives = Math.max(1,c.lives); P.bombs = Math.max(1,c.bombs); P.shield = c.shield;
   P.mods = Object.assign({},c.mods); P.alive = true; P.inv = 2.4;
