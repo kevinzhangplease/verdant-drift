@@ -949,6 +949,11 @@ function resetRun(startLevel){
   P.lives = diff.lives; P.bombs = 2; P.shield = 0; P.inv = 2; P.alive = true;
   P.mods = { power:0, spread:0, homing:0, pierce:0, drones:0, rapid:0 };
   P.relics = {}; P.od = 0; P.odT = 0; P.bulwarkT = 0; P.morphT = 0; P.droneForm = 0; P.gsT = 0;
+  /* the cannon's own clocks were never reset, so a new run inherited whatever phase the
+     previous one ended on — the first shot landed up to a full fire-interval early or late
+     and every kill after it shifted with it. Same seed, same RNG sequence, different
+     timing: this is the run-to-run drift that has been misread as a 'one-frame wobble'. */
+  P.fireT = 0; P.missileT = 0; P.tilt = 0; P.thrust = 0; P.focus = false;
   MODMAX.power=4; MODMAX.spread=2; MODMAX.rapid=2; MODMAX.homing=2; MODMAX.pierce=2; MODMAX.drones=2;
   if (startLevel >= 6) ascend();
   /* later sectors start you geared up — they're balanced for it */
@@ -4333,7 +4338,9 @@ function drawStars(dt){
   ctx.globalCompositeOperation='lighter';
   for (let l=0;l<3;l++) for (const st of stars[l]){
     st.y += st.s*dt*(state==='playing'?1:.35);
-    if (st.y>H+2){ st.y=-2; st.x=rnd(0,W); }
+    /* frnd: drawStars runs on the RENDER path, so a seeded draw here made the simulation's
+       RNG stream depend on how many frames the device happened to paint */
+    if (st.y>H+2){ st.y=-2; st.x=frnd(0,W); }
     st.tw += dt*3;
     ctx.fillStyle = rgba(PAL.star, .35+Math.sin(st.tw)*.25+l*.12);
     ctx.fillRect(st.x,st.y,st.r,st.r*(1+l*.6));
