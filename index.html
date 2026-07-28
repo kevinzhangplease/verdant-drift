@@ -470,7 +470,37 @@ const Sound = {
     for (let i=0;i<3;i++){ const o=this.ac.createOscillator(),g=this.ac.createGain();
       o.type='square'; o.frequency.value=220; const tt=t+i*.22;
       g.gain.setValueAtTime(0,tt); g.gain.linearRampToValueAtTime(.1,tt+.02); g.gain.exponentialRampToValueAtTime(.001,tt+.18);
-      o.connect(g); g.connect(this.sGain); o.start(tt); o.stop(tt+.2); } }
+      o.connect(g); g.connect(this.sGain); o.start(tt); o.stop(tt+.2); } },
+  /* pin the music intensity for a while — used to cut to silence on a boss kill and then
+     resolve upward, instead of the old deflate from 1 to .55 */
+  holdT:0,
+  hold(v,secs){ this.targetIntensity = v; this.holdT = secs; },
+  /* a very quiet, rate-limited pip — grazing fires this constantly, so it has to sit under
+     the mix rather than on top of it */
+  _lastTick:0,
+  tick(n){ if (!this.ready) return; const t=this.ac.currentTime;
+    if (t-this._lastTick<.055) return; this._lastTick=t;
+    const o=this.ac.createOscillator(), g=this.ac.createGain();
+    o.type='sine'; o.frequency.value=880*Math.pow(1.0595,n);
+    g.gain.setValueAtTime(.035,t); g.gain.exponentialRampToValueAtTime(.001,t+.07);
+    o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.08); },
+  /* the victory sting: a rising run through the sector's own scale, so it resolves in key */
+  fanfare(tier){ if (!this.ready) return;
+    const t=this.ac.currentTime+.06, M=MODES[this.mode], sc=M.scale;
+    const steps = tier>=2 ? 6 : tier>=1 ? 5 : 4, gap = .085;
+    for (let i=0;i<steps;i++){
+      const fr = sc[i%sc.length]*(i>=sc.length?2:1)*(i>=sc.length*2?2:1);
+      const tt = t+i*gap;
+      const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='triangle'; o.frequency.value=fr*2;
+      g.gain.setValueAtTime(0,tt); g.gain.linearRampToValueAtTime(.15,tt+.012);
+      g.gain.exponentialRampToValueAtTime(.001,tt+.42);
+      o.connect(g); g.connect(this.sGain); o.start(tt); o.stop(tt+.44);
+    }
+    /* a pad underneath the last note so the run lands on something */
+    const tt=t+steps*gap;
+    this.pad(M.chords[0].map(f=>f*2), tt, 1.6+tier*.4);
+  }
 };
 
 /* ============================================================
@@ -753,7 +783,7 @@ function updatePlayer(dt){
     if (aim===null){
       let best=null, bd=1e9;
       for (const e of enemies){ const dd=dist2(d.x,d.y,e.x,e.y); if (dd<bd){ bd=dd; best=e; } }
-      if (boss){ const dd=dist2(d.x,d.y,boss.x,boss.y); if (dd<bd){ bd=dd; best=boss; } }
+      if (boss && !boss.dying){ const dd=dist2(d.x,d.y,boss.x,boss.y); if (dd<bd){ bd=dd; best=boss; } }
       aim = best ? Math.atan2(best.y-d.y,best.x-d.x) : -Math.PI/2;
     }
     d.drawA = aim;
@@ -804,7 +834,7 @@ function useBomb(){
     return;
   }
   P.bombs--; P.inv = Math.max(P.inv,1.8);
-  shocks.push({ x:P.x, y:P.y, r:20, max:Math.hypot(W,H)*1.05, hitB:new Set(), hitE:new Set(), hitG:new Set() });
+  shocks.push({ x:P.x, y:P.y, r:20, max:Math.hypot(W,H)*1.05, hitB:new Set(), hitE:new Set(), hitG:new Set(), harmless:false });
   whiteout=.35; shake=20; Sound.bombFx(); haptic([0,60,40,80]);
   teach('bomb', 'The <b>shockwave</b> sweeps outward — it wipes enemy fire into crystals and damages everything it touches.');
   refreshHUD(true);
@@ -822,11 +852,11 @@ function updateShocks(dt){
         spark(b.x,b.y,PAL.crystal); ebullets.splice(j,1);
       }
     }
-    for (const e of enemies.slice()){
+    if (!s.harmless) for (const e of enemies.slice()){
       const d = Math.hypot(e.x-s.x, e.y-s.y);
       if (d <= s.r && !s.hitE.has(e)){ s.hitE.add(e); damageEnemy(e, 16, true); }
     }
-    if (boss){
+    if (boss && !s.harmless){
       const d = Math.hypot(boss.x-s.x, boss.y-s.y);
       if (d <= s.r && !s.hitB.has(boss)){
         s.hitB.add(boss);
@@ -834,7 +864,7 @@ function updateShocks(dt){
         damageBoss(16);
       }
     }
-    for (let gi=ground.length-1;gi>=0;gi--){ const gg=ground[gi];
+    if (!s.harmless) for (let gi=ground.length-1;gi>=0;gi--){ const gg=ground[gi];
       if (Math.hypot(gg.x-s.x,gg.y-s.y) <= s.r && !s.hitG.has(gg)){ s.hitG.add(gg); damageGround(gg,12); } }
     if (s.r > s.max) shocks.splice(i,1);
   }
@@ -1231,6 +1261,8 @@ function killEnemy(e,silent){
   if (e.drop) dropPickup(e.x,e.y,e.drop);
   else if (Math.random() < (T.r>18?.16:.06)) dropPickup(e.x,e.y,rollMod());
   shake = Math.max(shake, 4+T.r*.14);
+  /* the big ones land: a sliver of hitstop and a tap, never on trash (it feels mushy) */
+  if (T.r>18 && !silent){ hitstop = Math.max(hitstop, .05); haptic(6); }
 }
 function rollMod(){ return pick(['power','power','spread','rapid','homing','pierce','drones','shield','bomb']); }
 
@@ -1421,6 +1453,8 @@ function bossTotalHP(){
 function updateBoss(dt){
   const b = boss, d = b.def;
   b.t += dt; b.flash = Math.max(0,b.flash-dt*5);
+  /* dying: no phases, no sniper, no attacks — just the body coming apart */
+  if (b.dying){ updateBossDeath(b,dt); return; }
   b.spin += dt*(d.spin||0);
   if (d.move) d.move(b,dt);
   b.x = lerp(b.x,b.tx,1-Math.pow(.94,dt*60));
@@ -1457,7 +1491,7 @@ function updateBoss(dt){
   if (d.tick) d.tick(b,dt);
 }
 function damageBoss(dmg,part){
-  const b = boss; if (!b) return;
+  const b = boss; if (!b || b.dying) return;   /* a corpse takes no more hits */
   if (part && part.alive){
     part.hp -= dmg; b.flash = .6;
     if (part.hp<=0){
@@ -1489,21 +1523,93 @@ function damageBoss(dmg,part){
     }
   }
   updateBossBar();
-  if (b.hp<=0) killBoss();
+  if (b.hp<=0) beginBossDeath();
 }
-function killBoss(){
-  const b = boss, big = !!b.def.final;
-  addScore(b.def.reward||4000, b.x, b.y);
-  for (let i=0;i<(big?14:9);i++)
-    setTimeout(()=>{ burst(b.x+rnd(-80,80), b.y+rnd(-60,60), 30, i%2?PAL.boss:PAL.crystal, 340);
-                     Sound.boom(1.2); shake=20; }, i*110);
-  for (let k=0;k<16;k++) dropPickup(b.x+rnd(-70,70), b.y+rnd(-30,30), 'crystal');
-  dropPickup(b.x-34,b.y,rollMod()); dropPickup(b.x+34,b.y,rollMod()); dropPickup(b.x,b.y+26,'shield');
-  if (big) dropPickup(b.x,b.y-20,'bomb');
-  ebullets.length = 0; lasers.length = 0;
+/* ---- the kill ceremony (#21) -------------------------------------------------
+   The old killBoss nulled the boss and *then* fired nine setTimeout explosions, so the
+   death played out over empty space, on wall-clock time — ignoring pause, hitstop and all
+   five game-speed settings — and a boss death carried no hitstop at all, less punctuation
+   than blowing off one of its own pods. It also read the same for a 4,000-point warden and
+   the 60,000-point Aperture.
+
+   Now the boss stays on screen and visibly comes apart, driven from update(dt) so the whole
+   sequence inherits pause, hitstop and game speed for free, and keeps its randomness on the
+   fx stream. `boss` stays non-null until the end, which also means runLevelScript's
+   {clear:true} waits out the sequence with no extra plumbing. */
+const DEATH_DUR = [1.2, 2.0, 3.0];         /* mid-boss · sector final · campaign final */
+const DEATH_POPS = [7, 12, 18];
+function bossTier(def){
+  if (def.final) return (def.reward||0) >= 30000 ? 2 : 1;
+  return (def.reward||0) >= 20000 ? 1 : 0;
+}
+function beginBossDeath(){
+  const b = boss, def = b.def, tier = bossTier(def);
+  b.dying = { t:0, dur:DEATH_DUR[tier], tier, pop:0, pops:DEATH_POPS[tier] };
+  b.hp = 0;
+
+  /* the reward reads like a reward: big, bloomed, and counting up */
+  const reward = Math.round((def.reward||4000)*mult);
+  score += reward; refreshHUD();
+  floatUp(b.x, b.y-10, reward, PAL.star, { size:34, hold:1.8, prefix:'+' });
+
+  /* first beat: the impact */
+  hitstop = Math.max(hitstop, [.18,.28,.45][tier]);
+  shake = Math.max(shake, 22+tier*8);
+  whiteout = Math.max(whiteout, .22+tier*.1);
+  Sound.boom(1.4); haptic([0,30,40,90]);
+  Sound.hold(0, .5);                       /* silence, then the sting — see Sound.hold */
+
+  /* the arena clears itself: a harmless sweep that turns live fire into crystals */
+  const s = { x:b.x, y:b.y, r:20, max:Math.hypot(W,H)*1.05,
+              hitB:new Set(), hitE:new Set(), hitG:new Set(), harmless:true };
+  s.hitB.add(b);                           /* never re-enter damageBoss on the corpse */
+  shocks.push(s);
+  lasers.length = 0; warns.length = 0;
   curveField = 0; pullField = 0;
-  boss = null; showBoss(false);
-  Sound.targetIntensity = .55; whiteout = .3;
+
+  /* loot, magnetised so the biggest payout in the game can't be missed */
+  const nCry = 16 + tier*6;
+  for (let k=0;k<nCry;k++){
+    dropPickup(b.x+rnd(-70,70), b.y+rnd(-30,30), 'crystal');
+    pickups[pickups.length-1].mag = true;
+  }
+  dropPickup(b.x-34,b.y,rollMod()); dropPickup(b.x+34,b.y,rollMod()); dropPickup(b.x,b.y+26,'shield');
+  if (def.final) dropPickup(b.x,b.y-20,'bomb');
+  showBoss(false);
+}
+function updateBossDeath(b,dt){
+  const d = b.dying;
+  d.t += dt;
+  const k = clamp(d.t/d.dur, 0, 1);
+
+  /* the hull drifts, lists and sinks as it goes */
+  b.x += Math.sin(d.t*2.2)*14*dt;
+  b.y += (26 + 40*k)*dt;
+  b.spin += dt*(1.4 + k*3.2);
+
+  /* staggered detonations across the body, on the sim clock rather than wall-clock */
+  const stagger = d.dur/d.pops;
+  while (d.pop < d.pops && d.t > d.pop*stagger){
+    const a = frnd(0,TAU), rr = frnd(.2,1)*b.r*1.5;
+    burst(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr, 26+d.tier*6,
+          (d.pop%2) ? PAL.boss : PAL.crystal, 300+d.tier*60);
+    Sound.boom(1+d.tier*.15);
+    shake = Math.max(shake, 14+d.tier*4);
+    d.pop++;
+  }
+
+  if (d.t >= d.dur){
+    /* the last beat: everything at once, then the sting */
+    burst(b.x, b.y, 40+d.tier*14, PAL.crystal, 420+d.tier*80);
+    burst(b.x, b.y, 30+d.tier*10, PAL.boss, 300);
+    whiteout = Math.max(whiteout, .55+d.tier*.15);
+    shake = Math.max(shake, 30+d.tier*6);
+    hitstop = Math.max(hitstop, .12);
+    Sound.boom(1.6); haptic([0,50,50,120]);
+    Sound.fanfare(d.tier);
+    Sound.hold(.62, 2.2);                  /* resolve upward instead of deflating */
+    boss = null;
+  }
 }
 
 /* ============================================================
@@ -1577,7 +1683,7 @@ scrapjaw:{
     { k:'slam', every:6.5, first:5, needParts:0, fn:(b)=>{
         b.vars.slam = 1; b.tx = clamp(P.x,60,W-60); b.ty = H*.62;
         lance(b.x,b.y,Math.PI/2,.8,.1);
-        setTimeout(()=>{ if (boss===b){ b.ty=H*.18; b.vars.slam=0; shake=24;
+        setTimeout(()=>{ if (boss===b && !b.dying){ b.ty=H*.18; b.vars.slam=0; shake=24;
           ring(b.x,b.y,18,240*BV,rnd(0,TAU),{r:5}); Sound.boom(1.3); } }, 1100); } }
   ],
   draw:(b)=>{ ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=7;
@@ -3136,12 +3242,38 @@ function dropPickup(x,y,kind){
 function spawnWreck(x,y,mod){
   pickups.push({ x, y, vx:rnd(-30,30), vy:rnd(-40,-10), kind:'wreck', mod, t:0, r:16, mag:false });
 }
+/* A running total for rapid crystal collection (#21). Individually each crystal scored
+   quietly, so hoovering a boss's 16-crystal payout — the largest in the game — produced no
+   number at all. Consecutive pickups now accumulate into one float that keeps climbing. */
+let payoutF = null, payoutT = 0;
+function bankPayout(v){
+  payoutT = .9;
+  if (payoutF && payoutF.life > 0){
+    payoutF.to += v; payoutF.life = payoutF.max = Math.max(payoutF.life, .75);
+    payoutF.x = P.x; payoutF.y = P.y - 34;
+    return;
+  }
+  floatUp(P.x, P.y-34, v, PAL.crystal, { size:19, hold:.75, prefix:'+', count:false });
+  payoutF = floats[floats.length-1];
+  payoutF.num = v; payoutF.txt = '+' + v.toLocaleString();
+  payoutF.cu = 0;
+}
+function updatePayout(dt){
+  if (payoutT>0){ payoutT -= dt; if (payoutT<=0) payoutF = null; }
+  if (payoutF){
+    payoutF.x = lerp(payoutF.x, P.x, 1-Math.pow(.001,dt));
+    payoutF.y = lerp(payoutF.y, P.y-34, 1-Math.pow(.001,dt));
+    payoutF.num = payoutF.to;
+    payoutF.txt = '+' + payoutF.to.toLocaleString();
+  }
+}
 function collectPickup(p){
   if (p.kind==='crystal'){
     chain++; chainTimer = 2.6;
     recalcMult();
     cores++; addScore(25,p.x,p.y,true);
     Sound.chime(clamp(chain%12,0,11)); popMult();
+    bankPayout(Math.round(25*mult));
   } else if (p.kind==='shield'){
     P.shield = Math.min(P.shieldMax,P.shield+1);
     floatText(p.x,p.y,'SHIELD',PAL.hull); Sound.pickup();
@@ -3179,6 +3311,9 @@ function onGraze(b){
   /* Break (#9): graze charges the meter (Overcharge relic fills faster) */
   if (P.odT<=0) P.od = Math.min(1, (P.od||0) + ((P.relics&&P.relics.surge)?.03:.015));
   spark(b.x,b.y,PAL.crystal);
+  /* the highest-skill mechanic in the game used to be its quietest: nine grazes in ten made
+     no sound at all. Every one now ticks, quietly, rising with the streak. */
+  Sound.tick(clamp(grazeStreak%12,0,11));
   if (grazeStreak % 10 === 0){ Sound.chime(clamp(grazeStreak/10+3,0,11));
     floatText(P.x,P.y-30,'GRAZE ×'+grazeMult,PAL.crystal); popMult(); haptic(8); refreshHUD(); }
 }
@@ -3187,7 +3322,17 @@ function addScore(v,x,y,quiet){
   if (!quiet && v>=100) floatText(x,y,'+'+Math.round(v*mult),PAL.star);
   refreshHUD();
 }
-function floatText(x,y,txt,col){ floats.push({ x,y,txt,col,life:.9,max:.9 }); }
+function floatText(x,y,txt,col){
+  floats.push({ x,y,txt,col,life:.9,max:.9,size:13,num:0,from:0,to:0,cu:0,prefix:'' });
+}
+/* A number that looks like what it's worth: scaled, held, and counting up. The old float was
+   a fixed 13px, so a 60,000-point boss kill rendered exactly like a +500 pickup bonus. */
+function floatUp(x,y,value,col,o){
+  const hold=(o&&o.hold)||1.2;
+  floats.push({ x,y, txt:'', col, life:hold, max:hold,
+                size:(o&&o.size)||13, num:0, from:0, to:value,
+                cu:(o&&o.count===false)?0:Math.min(.8,hold*.5), prefix:(o&&o.prefix)||'' });
+}
 function burst(x,y,n,col,sp){
   n = Math.min(n, qParts());
   for (let i=0;i<n;i++){ const a=frnd(0,TAU), s=frnd(sp*.16,sp);
@@ -3274,7 +3419,7 @@ function update(dt){
     if (b.homing){
       let best=null, bd=1e9;
       for (const e of enemies){ const d=dist2(b.x,b.y,e.x,e.y); if (d<bd){ bd=d; best=e; } }
-      if (boss){ const d=dist2(b.x,b.y,boss.x,boss.y)*.6; if (d<bd){ bd=d; best=boss; } }
+      if (boss && !boss.dying){ const d=dist2(b.x,b.y,boss.x,boss.y)*.6; if (d<bd){ bd=d; best=boss; } }
       if (best){
         const want=Math.atan2(best.y-b.y,best.x-b.x), cur=Math.atan2(b.vy,b.vx);
         let da=((want-cur+Math.PI*3)%TAU)-Math.PI;
@@ -3299,7 +3444,7 @@ function update(dt){
     }
     if (gone){ swapDel(pbullets,i); continue; }
 
-    if (boss){
+    if (boss && !boss.dying){
       let hitPart = null, hit = false;
       for (const p of boss.parts){
         if (!p.alive) continue;
@@ -3317,6 +3462,9 @@ function update(dt){
   /* enemy bullets */
   for (let i=ebullets.length-1;i>=0;i--){
     const b = ebullets[i];
+    /* hurtPlayer() clears every bullet within 180px when a life is lost, and it is called
+       from inside this loop — so the array can shrink under us and leave i past the end. */
+    if (!b) continue;
     b.t += dt; b.life -= dt;
     if (b.k || curveField) bulletKinetics(b,dt);
     b.x += b.vx*dt; b.y += b.vy*dt;
@@ -3350,7 +3498,7 @@ function update(dt){
   if (P.alive && P.inv<=0){
     for (const e of enemies)
       if (dist2(e.x,e.y,P.x,P.y) < (e.r*.8+P.r)*(e.r*.8+P.r)){ damageEnemy(e,3); hurtPlayer(); break; }
-    if (boss){
+    if (boss && !boss.dying){    /* a dying hull is scenery, not a hazard */
       if (dist2(boss.x,boss.y,P.x,P.y) < (boss.r*.85+P.r)*(boss.r*.85+P.r)) hurtPlayer();
       else for (const p of boss.parts)
         if (p.alive && dist2(p.x,p.y,P.x,P.y) < (p.r*.8+P.r)*(p.r*.8+P.r)){ hurtPlayer(); break; }
@@ -3378,14 +3526,22 @@ function update(dt){
     p.x += p.vx*dt; p.y += p.vy*dt; p.vx *= .985; p.vy = p.vy*.985 + (p.g||0)*dt;
     if (p.life<=0){ partPool.push(p); swapDel(parts,i); }
   }
-  for (let i=floats.length-1;i>=0;i--){ const f=floats[i]; f.life -= dt; f.y -= dt*38; if (f.life<=0) swapDel(floats,i); }
+  updatePayout(dt);
+  for (let i=floats.length-1;i>=0;i--){ const f=floats[i];
+    f.life -= dt; f.y -= dt*(f.size>20?14:38);        /* big numbers hang rather than fly off */
+    if (f.cu){ const el=f.max-f.life;
+      f.num = el>=f.cu ? f.to : Math.round(f.to*(el/f.cu));
+      f.txt = f.prefix + f.num.toLocaleString(); }
+    if (f.life<=0) swapDel(floats,i); }
 
   shake *= Math.pow(.02,dt); flash *= Math.pow(.02,dt); whiteout *= Math.pow(.005,dt);
 
   if (P.alive && fchance(dt*90))
     parts.push({ x:P.x+frnd(-4,4), y:P.y+13, vx:frnd(-16,16), vy:frnd(120,220), life:.3, max:.3, r:frnd(1.6,3.4), c:PAL.bolt, g:0 });
 
-  Sound.targetIntensity = boss ? 1 : clamp(.2+enemies.length*.09+chain*.01,.15,.9);
+  /* a held value (the boss-death silence, then the resolve) outranks the per-frame recompute */
+  if (Sound.holdT > 0) Sound.holdT -= dt;
+  else Sound.targetIntensity = (boss && !boss.dying) ? 1 : clamp(.2+enemies.length*.09+chain*.01,.15,.9);
 }
 
 /* ============================================================
@@ -3693,18 +3849,48 @@ function dwAngler(e){
 /* --- boss render --- */
 function drawBoss(){
   const b = boss, d = b.def;
-  if (d.drawExtra) d.drawExtra(b);
+  /* drawExtra paints in untranslated screen space and toggles its own composite op, so it is
+     deliberately outside the dying transform — and suppressed once the hull is coming apart. */
+  if (d.drawExtra && !b.dying) d.drawExtra(b);
+
+  const dy = b.dying, k = dy ? clamp(dy.t/dy.dur,0,1) : 0;
+  if (dy){
+    /* The per-boss draw bodies read b.flash as a boolean, so progressive whitening can't go
+       through it without editing 20+ defs. Instead the whole hull gets one transform here and
+       a white wash on top, which works for every boss for free. */
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(Math.sin(dy.t*3.1)*.06*k + k*.18);
+    const sc = 1 + k*.12;
+    ctx.scale(sc, sc*(1-k*.06));
+    ctx.translate(-b.x, -b.y);
+    ctx.globalAlpha = 1 - k*.35;
+  }
+
   for (const p of b.parts){
     if (!p.alive) continue;
     ctx.save(); ctx.translate(p.x,p.y);
     if (d.drawPart) d.drawPart(b,p);
     ctx.restore();
-    addGlow(p.x,p.y,p.r*1.5,PAL.foe,.5);
+    if (!dy) addGlow(p.x,p.y,p.r*1.5,PAL.foe,.5);
   }
   ctx.save(); ctx.translate(b.x,b.y);
   d.draw(b);
+  if (dy){                                  /* the wash: hull burning out from the inside */
+    ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(0,0,0,0,0,b.r*1.35);
+    g.addColorStop(0, 'rgba(255,255,255,'+(.25+k*.7).toFixed(3)+')');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0,b.r*1.35,0,TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
   ctx.restore();
-  addGlow(b.x,b.y,b.r*1.6,PAL.boss,.55+b.flash*.4);
+
+  if (dy) ctx.restore();
+  /* going supernova: the cheapest knob is the glow it already has */
+  addGlow(b.x, b.y, b.r*(1.6 + k*2.2), dy?PAL.crystal:PAL.boss,
+          dy ? Math.min(1,.5+k*.5) : .55+b.flash*.4);
 }
 /* Warnings read as intent, never as ordnance: dashed, translucent, hot-band, and drawn
    under live fire. The dash tightens and the shape closes as the moment arrives. */
@@ -3845,8 +4031,15 @@ function drawParticles(){
 function drawFloats(){
   ctx.textAlign='center'; ctx.textBaseline='middle';
   for (const f of floats){
-    ctx.font='500 13px ui-monospace,monospace';
-    ctx.fillStyle=rgba(f.col, clamp(f.life/f.max,0,1)*.9);
+    const sz = f.size||13, a = clamp(f.life/f.max,0,1);
+    /* big ones punch in over the first 90ms, then hold — a reward should arrive, not fade in */
+    const pop = sz>20 ? 1 + .35*Math.max(0, 1-(f.max-f.life)/.09) : 1;
+    ctx.font = (sz>20?'700 ':'500 ') + (sz*pop).toFixed(1) + 'px ui-monospace,monospace';
+    if (sz>20){
+      ctx.fillStyle = rgba(f.col, a*.28);
+      ctx.fillText(f.txt, f.x, f.y+1.5);        /* cheap bloom without touching the glow buffer */
+    }
+    ctx.fillStyle = rgba(f.col, a*.9);
     ctx.fillText(f.txt,f.x,f.y);
   }
 }
