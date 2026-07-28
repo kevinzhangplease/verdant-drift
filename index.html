@@ -1392,6 +1392,14 @@ ART.picnic.enemy = {
   }
 };
 
+/* shellPath draws into the global ctx; painting a sprite needs the same polygon on an
+   offscreen context, so this is the identical maths taking its target as an argument. */
+function shellPathOn(c, n, r){
+  c.beginPath();
+  for (let i=0;i<n;i++){ const a=i/n*TAU-Math.PI/2, x=Math.cos(a)*r, y=Math.sin(a)*r; i?c.lineTo(x,y):c.moveTo(x,y); }
+  c.closePath();
+}
+
 /* ---- picnic: the bosses ---------------------------------------------------------
    Batch one of four. Same rules as the enemy roster: the food is chosen to fit the cool
    band rather than the band bent to fit the food, the geometry is untouched, and anything
@@ -1674,6 +1682,737 @@ ART.picnic.boss = {
       const g = ctx.createRadialGradient(0,0,0,0,0,38);
       g.addColorStop(0,rgba(PAL.ebullet,.95)); g.addColorStop(1,rgba(PAL.ebullet,0));
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,34+Math.sin(b.t*6)*4,0,TAU); ctx.fill();
+    }
+  },
+
+  /* ---- batch two ---- */
+
+  /* sovereign · the sugar bowl, and four cubes it will not let go of */
+  sovereign:{
+    draw(b){
+      const guarded = b.parts.some(p=>p.alive);
+      ctx.save(); ctx.rotate(b.spin);
+      blitSprite(sprite('sugarbowl', 96, 96, g=>{
+        softShadow(g, 38);
+        g.beginPath();
+        for (let i=0;i<4;i++){ const a=i/4*TAU, r=36;
+          const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+        g.closePath();
+        roundBody(g, 36, PAL.foe, PAL.foeDark); g.fill();
+        /* a fluted rim, so the diamond reads as porcelain rather than as a gem */
+        g.strokeStyle='rgba(255,255,255,.28)'; g.lineWidth=2;
+        for (let i=0;i<4;i++){ const a=i/4*TAU+Math.PI/4;
+          g.beginPath(); g.moveTo(Math.cos(a)*10,Math.sin(a)*10);
+          g.lineTo(Math.cos(a)*30,Math.sin(a)*30); g.stroke(); }
+        gloss(g, 30, .45);
+      }), 0, 0, 96, 96, 0);
+      ctx.strokeStyle=rgba(guarded?PAL.foe:PAL.boss,.95); ctx.lineWidth=2.6;
+      ctx.beginPath();
+      for (let i=0;i<4;i++){ const a=i/4*TAU, r=36;
+        const x=Math.cos(a)*r, y=Math.sin(a)*r; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+      ctx.closePath(); ctx.stroke();
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,14,0,TAU);
+      ctx.fillStyle=rgba(guarded?PAL.foeDark:PAL.ebullet,.95); ctx.fill();
+      if (guarded){ ctx.strokeStyle=rgba(PAL.foe,.3); ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.arc(0,0,46+Math.sin(b.t*4)*3,0,TAU); ctx.stroke(); }
+    },
+    drawPart(b,p){
+      ctx.rotate(b.t*1.2);
+      blitSprite(sprite('sugarcube', 52, 52, g=>{
+        softShadow(g, 18);
+        /* a cube in three-quarter view: top face, then two sides, so it has volume */
+        g.beginPath(); g.moveTo(0,-20); g.lineTo(18,-9); g.lineTo(0,2); g.lineTo(-18,-9); g.closePath();
+        g.fillStyle='rgba(250,248,242,1)'; g.fill();
+        g.beginPath(); g.moveTo(-18,-9); g.lineTo(0,2); g.lineTo(0,20); g.lineTo(-18,9); g.closePath();
+        g.fillStyle=rgba(PAL.foe,1); g.fill();
+        g.beginPath(); g.moveTo(18,-9); g.lineTo(0,2); g.lineTo(0,20); g.lineTo(18,9); g.closePath();
+        g.fillStyle=rgba(PAL.foeDark,1); g.fill();
+        /* the grain */
+        g.fillStyle='rgba(255,255,255,.35)';
+        for (const s of [[-7,-8],[5,-11],[-3,4],[9,-4]]){
+          g.beginPath(); g.arc(s[0],s[1],1.3,0,TAU); g.fill(); }
+      }), 0, 0, 52, 52, 0);
+      ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    }
+  },
+
+  /* architect · a chequered sandwich cake. It builds walls out of squares, so it is squares */
+  architect:{
+    draw(b){
+      ctx.save(); ctx.rotate(Math.PI/4);
+      blitSprite(sprite('chequer', 104, 104, g=>{
+        softShadow(g, 40);
+        g.beginPath(); g.rect(-34,-34,68,68);
+        roundBody(g, 40, PAL.star, PAL.foe); g.fill();
+        /* the chequerboard — alternating sponge and filling, four by four */
+        for (let ix=0; ix<4; ix++) for (let iy=0; iy<4; iy++){
+          if ((ix+iy)%2) continue;
+          g.fillStyle=rgba(PAL.foe,.9);
+          g.fillRect(-34+ix*17, -34+iy*17, 17, 17);
+        }
+        g.strokeStyle=rgba(PAL.foeDark,.55); g.lineWidth=2;
+        g.strokeRect(-34,-34,68,68);
+        gloss(g, 32, .3);
+      }), 0, 0, 104, 104, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.55); ctx.fillRect(-34,-34,68,68); }
+      ctx.restore();
+      /* the marzipan wrapper, still turning the other way */
+      ctx.save(); ctx.rotate(-b.t*.6);
+      ctx.strokeStyle=rgba(PAL.foe,.8); ctx.lineWidth=2;
+      ctx.beginPath(); ctx.rect(-52,-52,104,104); ctx.stroke(); ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,15+Math.sin(b.t*4)*2,0,TAU);
+      ctx.fillStyle=rgba(b.phase>=3?PAL.ebullet:PAL.boss,.95); ctx.fill();
+      if (b.phase>=3){ for (let s=-1;s<=1;s+=2){ ctx.save(); ctx.translate(s*120,40); ctx.globalAlpha=.4;
+        ctx.strokeStyle=rgba(PAL.boss,.8); ctx.lineWidth=2;
+        ctx.beginPath(); ctx.rect(-22,-22,44,44); ctx.stroke(); ctx.restore(); } }
+    }
+  },
+
+  /* lantern · a punched tin lantern, the kind that hangs over a picnic at dusk. Its lure is
+     the flame, which is exactly what the space lure was pretending to be */
+  lantern:{
+    draw(b){
+      blitSprite(sprite('tinlantern', 108, 88, g=>{
+        softShadow(g, 42);
+        g.beginPath(); g.ellipse(0,0,46,34,0,0,TAU);
+        roundBody(g, 44, PAL.foe, PAL.foeDark); g.fill();
+        /* the punched holes it throws light through */
+        g.fillStyle=rgba(PAL.elaser,.55);
+        for (let ring=1; ring<=3; ring++){
+          const n=6+ring*3, rr=ring*10;
+          for (let i=0;i<n;i++){ const a=i/n*TAU+ring;
+            g.beginPath(); g.arc(Math.cos(a)*rr*1.25, Math.sin(a)*rr*.85, 2.4, 0, TAU); g.fill(); }
+        }
+        /* rim bands top and bottom */
+        g.strokeStyle=rgba(PAL.foeDark,.7); g.lineWidth=3;
+        g.beginPath(); g.ellipse(0,0,46,34,0,0,TAU); g.stroke();
+        gloss(g, 36, .35);
+      }), 0, 0, 108, 88, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.6);
+        ctx.beginPath(); ctx.ellipse(0,0,46,34,0,0,TAU); ctx.fill(); }
+      /* the teeth stay: they are the silhouette the player reads at speed */
+      ctx.fillStyle=rgba(PAL.ebullet,.9);
+      for (let i=0;i<7;i++){ const a=Math.PI*.14+i/7*Math.PI*.72;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a)*30,Math.sin(a)*20);
+        ctx.lineTo(Math.cos(a)*46,Math.sin(a)*32);
+        ctx.lineTo(Math.cos(a+.12)*30,Math.sin(a+.12)*20); ctx.closePath(); ctx.fill(); }
+      /* space paints these two in PAL.crystal, a player key. Enemy band. */
+      ctx.beginPath(); ctx.arc(-14,-6,5,0,TAU); ctx.arc(14,-6,5,0,TAU);
+      ctx.fillStyle=rgba(PAL.elaser,.95); ctx.fill();
+    },
+    drawPart(b,p){
+      /* the flame on its wire — same pulse, same radii */
+      ctx.beginPath(); ctx.arc(0,0,10+Math.sin(b.t*4)*2,0,TAU);
+      ctx.fillStyle=rgba(PAL.elaser,.95); ctx.fill();
+      ctx.strokeStyle=rgba(PAL.elaser,.4); ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(0,0,20+Math.sin(b.t*4)*4,0,TAU); ctx.stroke();
+    }
+  },
+
+  /* leviathan · a caterpillar. Nine segments and a head that turns to face you — it was
+     already a caterpillar, it just had not been told */
+  leviathan:{
+    draw(b){
+      const a = Math.atan2(P.y-b.y,P.x-b.x);
+      ctx.rotate(a+Math.PI/2);
+      blitSprite(sprite('caterhead', 92, 92, g=>{
+        softShadow(g, 34);
+        g.beginPath();
+        g.moveTo(0,-40); g.lineTo(26,10); g.lineTo(12,28); g.lineTo(-12,28); g.lineTo(-26,10);
+        g.closePath();
+        roundBody(g, 36, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.6); g.lineWidth=2.4; g.stroke();
+        /* antennae */
+        g.strokeStyle=rgba(PAL.foeDark,.8); g.lineWidth=2;
+        for (const s of [-1,1]){
+          g.beginPath(); g.moveTo(s*8,-30); g.quadraticCurveTo(s*18,-42, s*22,-36); g.stroke();
+          g.beginPath(); g.arc(s*22,-36,3,0,TAU); g.fillStyle=rgba(PAL.elaser,.9); g.fill(); }
+        gloss(g, 28, .4);
+      }), 0, 0, 92, 92, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.6);
+        ctx.beginPath(); ctx.moveTo(0,-40); ctx.lineTo(26,10); ctx.lineTo(12,28);
+        ctx.lineTo(-12,28); ctx.lineTo(-26,10); ctx.closePath(); ctx.fill(); }
+      ctx.fillStyle=rgba(PAL.ebullet,.9);
+      ctx.beginPath(); ctx.arc(-10,-8,5,0,TAU); ctx.arc(10,-8,5,0,TAU); ctx.fill();
+      /* the mouth line — space uses PAL.crystal here. Enemy band. */
+      ctx.strokeStyle=rgba(PAL.elaser,.8); ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(-14,14); ctx.lineTo(14,14); ctx.stroke();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('caterseg', 48, 48, g=>{
+        g.beginPath(); g.arc(0,0,18,0,TAU);
+        roundBody(g, 18, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.55); g.lineWidth=2; g.stroke();
+        /* the little legs each segment stands on */
+        g.strokeStyle=rgba(PAL.foeDark,.7); g.lineWidth=2;
+        for (const s of [-1,1]){
+          g.beginPath(); g.moveTo(s*14,6); g.lineTo(s*20,14); g.stroke(); }
+        gloss(g, 15, .45);
+      }), 0, 0, 48, 48, 0);
+      ctx.beginPath(); ctx.arc(0,0,6+Math.sin(b.t*5+p.idx)*1.5,0,TAU);
+      ctx.fillStyle=rgba(PAL.elaser,.85); ctx.fill();
+    }
+  },
+
+  /* gauntlet · three courses. It changes shape on the phase, so it changes dish */
+  gauntlet:{
+    draw(b){
+      const f = b.vars.form;
+      ctx.save(); ctx.rotate(b.spin);
+      if (f===1){
+        /* a scone */
+        blitSprite(sprite('scone', 96, 96, g=>{
+          softShadow(g, 38);
+          shellPathOn(g, 6, 40);
+          roundBody(g, 40, PAL.foe, PAL.foeDark); g.fill();
+          g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=2.4; g.stroke();
+          /* the split where the jam goes */
+          g.beginPath(); g.ellipse(0,4,38,7,0,0,TAU);
+          g.fillStyle=rgba(PAL.elaser,.85); g.fill();
+          gloss(g, 32, .4);
+        }), 0, 0, 96, 96, 0);
+      } else if (f===2){
+        /* a star biscuit */
+        blitSprite(sprite('starbisc', 100, 100, g=>{
+          softShadow(g, 40);
+          g.beginPath();
+          for (let i=0;i<16;i++){ const a=i/16*TAU, r=i%2?42:28;
+            const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+          g.closePath();
+          roundBody(g, 42, PAL.foeDark, PAL.foeDark); g.fill();
+          g.beginPath();
+          for (let i=0;i<16;i++){ const a=i/16*TAU, r=i%2?33:21;
+            const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+          g.closePath();
+          roundBody(g, 32, PAL.foe, PAL.elaser); g.fill();
+          gloss(g, 28, .4);
+        }), 0, 0, 100, 100, 0);
+      } else {
+        /* a sandwich */
+        blitSprite(sprite('sandwich', 88, 88, g=>{
+          softShadow(g, 34);
+          g.beginPath(); g.rect(-32,-32,64,64);
+          roundBody(g, 34, PAL.star, PAL.foe); g.fill();
+          g.fillStyle=rgba(PAL.foe,.9); g.fillRect(-32,-6,64,9);
+          g.fillStyle=rgba(PAL.elaser,.8); g.fillRect(-32,4,64,5);
+          g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=2; g.strokeRect(-32,-32,64,64);
+          gloss(g, 28, .3);
+        }), 0, 0, 88, 88, 0);
+      }
+      if (b.flash>0){ ctx.fillStyle=flashFill(.6);
+        ctx.beginPath(); ctx.arc(0,0,40,0,TAU); ctx.fill(); }
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,15+Math.sin(b.t*4)*2,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.95); ctx.fill();
+    }
+  },
+
+  /* quietstar · the grand jelly mould, and the wedges cut from it. Campaign one's showpiece,
+     so it gets the showpiece pudding */
+  quietstar:{
+    draw(b){
+      for (let i=4;i>0;i--){
+        ctx.beginPath(); ctx.arc(0,0,60+i*22+Math.sin(b.t*1.6+i)*7,0,TAU);
+        ctx.strokeStyle=rgba(PAL.boss,.10*i); ctx.lineWidth=2.5; ctx.stroke();
+      }
+      ctx.save(); ctx.rotate(b.spin);
+      blitSprite(sprite('jellymould', 156, 156, g=>{
+        softShadow(g, 64);
+        g.beginPath();
+        for (let i=0;i<12;i++){ const a=i/12*TAU, r=i%2?66:40;
+          const x=Math.cos(a)*r, y=Math.sin(a)*r; i?g.lineTo(x,y):g.moveTo(x,y); }
+        g.closePath();
+        roundBody(g, 62, PAL.foe, PAL.foeDark); g.fill();
+        /* the ribs of the mould, catching the light down each point */
+        g.strokeStyle='rgba(255,255,255,.30)'; g.lineWidth=2.4;
+        for (let i=0;i<12;i+=2){ const a=i/12*TAU;
+          g.beginPath(); g.moveTo(0,0); g.lineTo(Math.cos(a)*62,Math.sin(a)*62); g.stroke(); }
+        /* it is translucent, so the far side shows through faintly */
+        g.beginPath(); g.arc(0,0,34,0,TAU);
+        g.fillStyle='rgba(255,255,255,.16)'; g.fill();
+        gloss(g, 50, .55);
+      }), 0, 0, 156, 156, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.7);
+        ctx.beginPath(); ctx.arc(0,0,62,0,TAU); ctx.fill(); }
+      /* space rims this in PAL.crystal, a player key. Enemy band. */
+      ctx.strokeStyle=rgba(PAL.elaser,.9); ctx.lineWidth=3;
+      ctx.beginPath();
+      for (let i=0;i<12;i++){ const a=i/12*TAU, r=i%2?66:40;
+        const x=Math.cos(a)*r, y=Math.sin(a)*r; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+      ctx.closePath(); ctx.stroke();
+      ctx.restore();
+      const g = ctx.createRadialGradient(0,0,3,0,0,44);
+      g.addColorStop(0,rgba(PAL.ebullet,.95)); g.addColorStop(1,rgba(PAL.ebullet,0));
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,38+Math.sin(b.t*5)*5,0,TAU); ctx.fill();
+    },
+    drawPart(b,p){
+      ctx.rotate(p.a+b.spin+b.t*.5);
+      /* a wedge of the same jelly, on the shard's exact diamond */
+      ctx.beginPath(); ctx.moveTo(0,-24); ctx.lineTo(14,0); ctx.lineTo(0,24); ctx.lineTo(-14,0); ctx.closePath();
+      const g = ctx.createLinearGradient(0,-24,0,24);
+      g.addColorStop(0, rgba(PAL.foe,1)); g.addColorStop(1, rgba(PAL.foeDark,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.boss,.95); ctx.lineWidth=2.2; ctx.stroke();
+      ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(0,18); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    }
+  },
+
+  /* ---- batch three ---- */
+
+  /* harrow · a cake fork. Three tines, and it rakes */
+  harrow:{
+    draw(b){
+      ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=7;
+      ctx.beginPath(); ctx.moveTo(-84,8); ctx.lineTo(0,-30); ctx.lineTo(84,8); ctx.stroke();
+      blitSprite(sprite('forkboss', 96, 96, g=>{
+        softShadow(g, 38);
+        shellPathOn(g, 5, 40);
+        roundBody(g, 40, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.55); g.lineWidth=2.4; g.stroke();
+        /* the ferrule bands where the handle meets the head */
+        g.strokeStyle='rgba(255,255,255,.28)'; g.lineWidth=3;
+        for (let i=1;i<=3;i++){ g.beginPath(); g.arc(0,0,40-i*9,0,TAU); g.stroke(); }
+        gloss(g, 32, .4);
+      }), 0, 0, 96, 96, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.7);
+        ctx.beginPath(); ctx.arc(0,0,40,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,14+Math.sin(b.t*3)*2,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      /* a tine, on the blade's exact triangle */
+      ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(16,14); ctx.lineTo(-16,14); ctx.closePath();
+      const g = ctx.createLinearGradient(0,-22,0,14);
+      g.addColorStop(0,'rgba(255,255,255,.95)'); g.addColorStop(1, rgba(PAL.foe,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2; ctx.stroke();
+    }
+  },
+
+  /* cairn · a layer cake, and you knock the tiers off one at a time */
+  cairn:{
+    draw(b){
+      blitSprite(sprite('cakecore', 108, 108, g=>{
+        softShadow(g, 44);
+        shellPathOn(g, 6, 46);
+        roundBody(g, 46, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=2.6; g.stroke();
+        /* the crumb of the sponge */
+        g.fillStyle='rgba(255,255,255,.18)';
+        for (let i=0;i<26;i++){ const a=i*2.4, r=8+((i*11)%34);
+          g.beginPath(); g.arc(Math.cos(a)*r, Math.sin(a)*r, 2.2, 0, TAU); g.fill(); }
+        gloss(g, 38, .35);
+      }), 0, 0, 108, 108, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.7);
+        ctx.beginPath(); ctx.arc(0,0,46,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,16+Math.sin(b.t*2.4)*3,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    },
+    drawPart(b,p){
+      /* a tier: the slab's exact rectangle, iced along the top edge */
+      ctx.beginPath(); ctx.rect(-32,-15,64,30);
+      const g = ctx.createLinearGradient(0,-15,0,15);
+      g.addColorStop(0, rgba(PAL.star,1)); g.addColorStop(.4, rgba(PAL.foe,1));
+      g.addColorStop(1, rgba(PAL.foeDark,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.85); ctx.lineWidth=2; ctx.stroke();
+      /* piped drips over the edge */
+      ctx.fillStyle=rgba(PAL.elaser,.85);
+      for (let i=0;i<6;i++){ const x=-27+i*11;
+        ctx.beginPath(); ctx.ellipse(x,-11,4,5+((i*7)%5),0,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.8); ctx.fill();
+    }
+  },
+
+  /* bract · a platter, fanned. Its nodes are cucumber slices laid out in an arc */
+  bract:{
+    draw(b){
+      ctx.save(); ctx.rotate(-b.spin);
+      for (let i=0;i<5;i++){ const a=(i/5)*Math.PI - Math.PI*.1;
+        ctx.strokeStyle=rgba(PAL.foe,.45); ctx.lineWidth=4;
+        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*80,Math.sin(a)*80); ctx.stroke(); }
+      ctx.restore();
+      blitSprite(sprite('platter', 96, 96, g=>{
+        softShadow(g, 38);
+        /* a near-white body reads as background or as a pickup at speed, so the plate keeps
+           its enemy-band fill and gets its whiteness from the rim instead */
+        shellPathOn(g, 6, 40);
+        roundBody(g, 40, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.star,.75); g.lineWidth=3; g.stroke();
+        g.beginPath(); g.arc(0,0,26,0,TAU);
+        g.strokeStyle='rgba(255,255,255,.35)'; g.lineWidth=2; g.stroke();
+        gloss(g, 32, .4);
+      }), 0, 0, 96, 96, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.7);
+        ctx.beginPath(); ctx.arc(0,0,40,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,14,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('cucumber', 52, 52, g=>{
+        g.beginPath(); g.arc(0,0,20,0,TAU);
+        roundBody(g, 20, PAL.foe, PAL.foeDark); g.fill();
+        g.beginPath(); g.arc(0,0,15,0,TAU);
+        g.fillStyle=rgba(PAL.star,.55); g.fill();
+        /* the seeds, in their ring */
+        g.fillStyle=rgba(PAL.foeDark,.7);
+        for (let i=0;i<7;i++){ const a=i/7*TAU;
+          g.beginPath(); g.ellipse(Math.cos(a)*7,Math.sin(a)*7,2,3,a,0,TAU); g.fill(); }
+        gloss(g, 17, .4);
+      }), 0, 0, 52, 52, 0);
+      ctx.beginPath(); ctx.arc(0,0,7+Math.sin(b.t*4)*1.5,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    }
+  },
+
+  /* medusa · the jelly turned out of a jellyfish mould, which is what the bell always was */
+  medusa:{
+    draw(b){
+      const bell = b.vars.bell||0;          /* driven by the fight, not by a local clock */
+      ctx.beginPath();
+      ctx.moveTo(-52,10); ctx.quadraticCurveTo(-52,-44-bell*10, 0,-44-bell*14);
+      ctx.quadraticCurveTo(52,-44-bell*10, 52,10);
+      ctx.quadraticCurveTo(0,26+bell*10, -52,10); ctx.closePath();
+      /* the wobble is live, so this one is painted rather than blitted */
+      const g = ctx.createRadialGradient(-16,-24,4, 0,-8,64);
+      g.addColorStop(0, rgba(PAL.star,.95));
+      g.addColorStop(.45, rgba(PAL.foe,.92));
+      g.addColorStop(1, rgba(PAL.foeDark,.95));
+      ctx.fillStyle = b.flash>0?flashFill(.72):g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.boss,.9); ctx.lineWidth=2.6; ctx.stroke();
+      /* the set fruit suspended in it */
+      ctx.fillStyle=rgba(PAL.elaser,.5);
+      for (const s of [[-26,-14],[18,-20],[-6,2],[30,-4],[-34,2]]){
+        ctx.beginPath(); ctx.arc(s[0],s[1]-bell*5,5,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,-6,14+bell*5,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('jellydrop', 40, 40, g=>{
+        g.beginPath(); g.arc(0,0,14,0,TAU);
+        roundBody(g, 14, PAL.foe, PAL.foeDark); g.fill();
+        gloss(g, 12, .6);
+      }), 0, 0, 40, 40, 0);
+      ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(0,0,14,0,TAU); ctx.stroke();
+    }
+  },
+
+  /* cantor · sandwiches, cut into triangles. It keeps the time and they stack on the beat */
+  cantor:{
+    draw(b){
+      ctx.save(); ctx.rotate(b.t*.4);
+      for (let i=0;i<3;i++){
+        shellPath(3,26+i*10);
+        /* space rings the middle one in PAL.crystal, a player key. Enemy band. */
+        ctx.strokeStyle=rgba(i===1?PAL.elaser:PAL.boss,.6); ctx.lineWidth=2.2; ctx.stroke();
+      }
+      ctx.restore();
+      blitSprite(sprite('cheeseround', 76, 76, g=>{
+        softShadow(g, 30);
+        shellPathOn(g, 6, 30);
+        roundBody(g, 30, PAL.star, PAL.foe); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.5); g.lineWidth=2.4; g.stroke();
+        /* the cut marks, where the wedges come from */
+        g.strokeStyle=rgba(PAL.foeDark,.35); g.lineWidth=1.6;
+        for (let i=0;i<6;i++){ const a=i/6*TAU;
+          g.beginPath(); g.moveTo(0,0); g.lineTo(Math.cos(a)*29,Math.sin(a)*29); g.stroke(); }
+        gloss(g, 25, .4);
+      }), 0, 0, 76, 76, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.7);
+        ctx.beginPath(); ctx.arc(0,0,30,0,TAU); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,12+Math.sin(b.t*5)*3,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      /* a sandwich triangle, on the voice's exact tri */
+      shellPath(3,18);
+      const g = ctx.createLinearGradient(0,-18,0,18);
+      g.addColorStop(0, rgba(PAL.star,1)); g.addColorStop(.5, rgba(PAL.foe,1));
+      g.addColorStop(1, rgba(PAL.star,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.95); ctx.lineWidth=2; ctx.stroke();
+    }
+  },
+
+  /* basilica · a cake stand. Three voices, three cupcakes */
+  basilica:{
+    draw(b){
+      ctx.save(); ctx.rotate(-b.spin*.7);
+      for (let i=0;i<3;i++){ const a=i/3*TAU, r1=42, r2=110;
+        ctx.strokeStyle=rgba(PAL.boss,.5); ctx.lineWidth=3.4;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a)*r1,Math.sin(a)*r1);
+        ctx.lineTo(Math.cos(a)*r2,Math.sin(a)*r2); ctx.stroke(); }
+      ctx.restore();
+      blitSprite(sprite('standtop', 100, 100, g=>{
+        softShadow(g, 40);
+        shellPathOn(g, 8, 42);
+        roundBody(g, 42, PAL.foe, PAL.foeDark); g.fill();
+        /* a piped border round the plate */
+        g.fillStyle=rgba(PAL.star,.8);
+        for (let i=0;i<20;i++){ const a=i/20*TAU;
+          g.beginPath(); g.arc(Math.cos(a)*36,Math.sin(a)*36,4,0,TAU); g.fill(); }
+        gloss(g, 34, .4);
+      }), 0, 0, 100, 100, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(1);
+        ctx.beginPath(); ctx.arc(0,0,42,0,TAU); ctx.fill(); }
+      /* space rims this in PAL.crystal, a player key. Enemy band. */
+      ctx.strokeStyle=rgba(PAL.elaser,.9); ctx.lineWidth=2.8;
+      shellPath(8,42); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,16+Math.sin(b.t*3)*3,0,TAU);
+      ctx.fillStyle=rgba(PAL.boss,.95); ctx.fill();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('cupcake', 60, 60, g=>{
+        softShadow(g, 22);
+        /* the case */
+        g.beginPath(); g.moveTo(-16,2); g.lineTo(16,2); g.lineTo(11,20); g.lineTo(-11,20); g.closePath();
+        g.fillStyle=rgba(PAL.foeDark,1); g.fill();
+        g.strokeStyle='rgba(255,255,255,.2)'; g.lineWidth=1.4;
+        for (let i=-3;i<=3;i++){ g.beginPath(); g.moveTo(i*4.6,2); g.lineTo(i*3.4,20); g.stroke(); }
+        /* the swirl of icing */
+        for (let i=3;i>=0;i--){
+          g.beginPath(); g.ellipse(0, 0-i*5, 17-i*3.4, 8-i*1.4, 0, 0, TAU);
+          g.fillStyle=rgba(i%2?PAL.foe:PAL.elaser,1); g.fill();
+        }
+        gloss(g, 15, .45);
+      }), 0, 0, 60, 60, 0);
+      ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
+    }
+  },
+
+  /* ---- batch four ---- */
+
+  /* loom · a lattice pie between two spools of liquorice lace */
+  loom:{
+    draw(b){
+      ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(-96,0); ctx.lineTo(96,0); ctx.stroke();
+      ctx.save(); ctx.rotate(b.t*.6);
+      blitSprite(sprite('latticepie', 92, 92, g=>{
+        softShadow(g, 36);
+        shellPathOn(g, 4, 38);
+        roundBody(g, 38, PAL.foe, PAL.foeDark); g.fill();
+        /* the woven top — this is a loom, so the weave has to be the subject */
+        g.strokeStyle=rgba(PAL.star,.8); g.lineWidth=4;
+        for (let i=-2;i<=2;i++){
+          g.beginPath(); g.moveTo(i*12,-30); g.lineTo(i*12,30); g.stroke();
+          g.beginPath(); g.moveTo(-30,i*12); g.lineTo(30,i*12); g.stroke();
+        }
+        gloss(g, 30, .35);
+      }), 0, 0, 92, 92, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(1);
+        ctx.beginPath(); ctx.arc(0,0,38,0,TAU); ctx.fill(); }
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,13,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      ctx.save(); ctx.rotate(b.t*1.4);
+      blitSprite(sprite('spool', 52, 52, g=>{
+        shellPathOn(g, 4, 20);
+        roundBody(g, 20, PAL.foeDark, PAL.foeDark); g.fill();
+        /* the lace wound round it */
+        g.strokeStyle=rgba(PAL.foe,.95); g.lineWidth=3;
+        for (let i=1;i<=3;i++){ g.beginPath(); g.arc(0,0,20-i*5,0,TAU); g.stroke(); }
+        g.strokeStyle=rgba(PAL.elaser,.6); g.lineWidth=1.6;
+        g.beginPath(); g.arc(0,0,17,0,TAU*.7); g.stroke();
+      }), 0, 0, 52, 52, 0);
+      ctx.strokeStyle=rgba(PAL.foe,.95); ctx.lineWidth=2;
+      shellPath(4,20); ctx.stroke();
+      ctx.restore();
+    }
+  },
+
+  /* reflection · it flies like you, so it IS you — the same bottle silhouette, in the enemy
+     band. That is the whole joke of this fight and it survives the reskin intact */
+  reflection:{
+    draw(b){
+      ctx.save(); ctx.scale(2.2,2.2); ctx.rotate(Math.PI);
+      blitSprite(sprite('mirrorbottle', 52, 62, g=>{
+        softShadow(g, 20);
+        /* body */
+        g.beginPath();
+        g.moveTo(-9,-4); g.lineTo(-9,20); g.quadraticCurveTo(-9,25,-4,25);
+        g.lineTo(4,25); g.quadraticCurveTo(9,25,9,20); g.lineTo(9,-4);
+        g.quadraticCurveTo(9,-10,4,-12); g.lineTo(4,-19);
+        g.lineTo(-4,-19); g.lineTo(-4,-12); g.quadraticCurveTo(-9,-10,-9,-4);
+        g.closePath();
+        roundBody(g, 16, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.6); g.lineWidth=1.2; g.stroke();
+        /* the cap */
+        g.beginPath(); g.roundRect(-5,-24,10,6,2);
+        g.fillStyle=rgba(PAL.elaser,1); g.fill();
+        /* the label */
+        g.beginPath(); g.roundRect(-7,2,14,11,2);
+        g.fillStyle='rgba(250,246,238,.9)'; g.fill();
+        gloss(g, 12, .5);
+      }), 0, 0, 52, 62, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(1);
+        ctx.beginPath(); ctx.roundRect(-9,-19,18,44,5); ctx.fill(); }
+      ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(2.6,-2); ctx.lineTo(-2.6,-2); ctx.closePath();
+      ctx.fillStyle=rgba(PAL.ebullet,.95); ctx.fill();
+      ctx.restore();
+    }
+  },
+
+  /* valve · a mangosteen. It opens on the beat and it is purple without being asked */
+  valve:{
+    draw(b){
+      const open = Math.sin(b.t*1.6) <= 0;
+      ctx.save(); ctx.rotate(b.spin);
+      for (let i=0;i<4;i++){
+        ctx.save(); ctx.rotate(i/4*TAU);
+        ctx.beginPath(); ctx.moveTo(0,0);
+        ctx.quadraticCurveTo(30,-16, open?18:44, 0);
+        ctx.quadraticCurveTo(30,16, 0,0); ctx.closePath();
+        const g = ctx.createLinearGradient(0,0,44,0);
+        g.addColorStop(0, rgba(PAL.foeDark,1)); g.addColorStop(1, rgba(PAL.foe,1));
+        ctx.fillStyle=b.flash>0?flashFill(.6):g; ctx.fill();
+        ctx.strokeStyle=rgba(PAL.foe,.85); ctx.lineWidth=2; ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+      /* the white segments inside, revealed when it opens — the tell, made edible */
+      if (open){
+        ctx.fillStyle='rgba(252,250,246,.9)';
+        for (let i=0;i<5;i++){ const a=i/5*TAU+b.spin;
+          ctx.beginPath(); ctx.ellipse(Math.cos(a)*9,Math.sin(a)*9,6,5,a,0,TAU); ctx.fill(); }
+      }
+      ctx.beginPath(); ctx.arc(0,0,open?18:11,0,TAU);
+      ctx.fillStyle=rgba(open?PAL.ebullet:PAL.boss,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('mangoseg', 52, 52, g=>{
+        shellPathOn(g, 5, 20);
+        roundBody(g, 20, PAL.foe, PAL.foeDark); g.fill();
+        g.beginPath(); g.arc(0,0,11,0,TAU);
+        g.fillStyle='rgba(252,250,246,.85)'; g.fill();
+        gloss(g, 17, .4);
+      }), 0, 0, 52, 52, 0);
+      ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2;
+      shellPath(5,20); ctx.stroke();
+    }
+  },
+
+  /* heart · a beetroot. Heart-shaped, purple to the core, and it bleeds when you cut it */
+  heart:{
+    draw(b){
+      const k = 1 + (b.vars.beat||0)*.12;
+      ctx.save(); ctx.scale(k,k);
+      ctx.beginPath();
+      ctx.moveTo(0,36);
+      ctx.bezierCurveTo(-58,4,-46,-42,-16,-34); ctx.bezierCurveTo(-6,-30,0,-20,0,-16);
+      ctx.bezierCurveTo(0,-20,6,-30,16,-34); ctx.bezierCurveTo(46,-42,58,4,0,36);
+      ctx.closePath();
+      const g = ctx.createRadialGradient(-14,-18,4, 0,0,62);
+      g.addColorStop(0, rgba(PAL.foe,1)); g.addColorStop(.6, rgba(PAL.foe,1));
+      g.addColorStop(1, rgba(PAL.foeDark,1));
+      ctx.fillStyle=b.flash>0?flashFill(1):g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.boss,.95); ctx.lineWidth=2.6; ctx.stroke();
+      /* the growth rings a cut beetroot has */
+      ctx.strokeStyle='rgba(255,255,255,.16)'; ctx.lineWidth=2;
+      for (let i=1;i<=3;i++){ ctx.beginPath(); ctx.ellipse(0,-2,10+i*11,9+i*10,0,0,TAU); ctx.stroke(); }
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,14+(b.vars.beat||0)*8,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.5+(b.vars.beat||0)*.45); ctx.fill();
+    },
+    drawPart(b,p){
+      /* a root, on the artery's exact ellipse */
+      ctx.beginPath(); ctx.ellipse(0,0,20,13,b.t*.4,0,TAU);
+      const g = ctx.createRadialGradient(-6,-4,2, 0,0,22);
+      g.addColorStop(0, rgba(PAL.foe,1)); g.addColorStop(1, rgba(PAL.foeDark,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2; ctx.stroke();
+      /* the tail of the root, pointing out from the centre */
+      ctx.strokeStyle=rgba(PAL.foeDark,.8); ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(14,0); ctx.quadraticCurveTo(24,4,30,0); ctx.stroke();
+    }
+  },
+
+  /* keeper · the preserving jar, seen from above, with six clamps round the lid */
+  keeper:{
+    draw(b){
+      ctx.save(); ctx.rotate(b.spin);
+      for (let i=0;i<6;i++){
+        ctx.save(); ctx.rotate(i/6*TAU);
+        ctx.beginPath(); ctx.moveTo(14,-10); ctx.lineTo(46,-22); ctx.lineTo(46,22); ctx.lineTo(14,10); ctx.closePath();
+        const g = ctx.createLinearGradient(14,0,46,0);
+        g.addColorStop(0, rgba(PAL.foe,1)); g.addColorStop(1, rgba(PAL.foeDark,1));
+        ctx.fillStyle=b.flash>0?flashFill(.7):g; ctx.fill();
+        ctx.strokeStyle=rgba(PAL.boss,.85); ctx.lineWidth=2; ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+      /* the rubber seal, the ring you are trying to break */
+      ctx.strokeStyle=rgba(PAL.elaser,.55); ctx.lineWidth=5;
+      ctx.beginPath(); ctx.arc(0,0,30,0,TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,16+Math.sin(b.t*3)*3,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      blitSprite(sprite('clamp', 44, 44, g=>{
+        shellPathOn(g, 4, 17);
+        roundBody(g, 17, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle='rgba(255,255,255,.3)'; g.lineWidth=2;
+        g.beginPath(); g.moveTo(-8,0); g.lineTo(8,0); g.stroke();
+      }), 0, 0, 44, 44, 0);
+      /* space strokes this in PAL.crystal, a player key. Enemy band. */
+      ctx.strokeStyle=rgba(PAL.elaser,.9); ctx.lineWidth=2;
+      shellPath(4,17); ctx.stroke();
+    }
+  },
+
+  /* aperture · the basket lid, opening. Five leaves of wicker and whatever is under them */
+  aperture:{
+    draw(b){
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      for (let i=0;i<5;i++){ ctx.strokeStyle=rgba(PAL.boss,.09); ctx.lineWidth=1.6;
+        ctx.beginPath(); ctx.arc(0,0,74+i*30+Math.sin(b.t*1.4+i)*9,0,TAU); ctx.stroke(); }
+      ctx.restore();
+      ctx.save(); ctx.rotate(b.spin);
+      for (let i=0;i<5;i++){ const a=i/5*TAU, r1=50, r2=124;
+        /* space draws these spokes in PAL.crystal, a player key. Enemy band. */
+        ctx.strokeStyle=rgba(PAL.elaser,.6); ctx.lineWidth=3.4;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a)*r1,Math.sin(a)*r1);
+        ctx.lineTo(Math.cos(a)*r2,Math.sin(a)*r2); ctx.stroke(); }
+      ctx.restore();
+      blitSprite(sprite('basketlid', 108, 108, g=>{
+        softShadow(g, 44);
+        g.beginPath(); g.arc(0,0,46,0,TAU);
+        roundBody(g, 46, PAL.foe, PAL.foeDark); g.fill();
+        /* woven wicker: two families of arcs crossing */
+        g.strokeStyle=rgba(PAL.foeDark,.55); g.lineWidth=3;
+        for (let i=-3;i<=3;i++){
+          g.save(); g.beginPath(); g.arc(0,0,46,0,TAU); g.clip();
+          g.beginPath(); g.moveTo(i*13,-50); g.lineTo(i*13,50); g.stroke();
+          g.beginPath(); g.moveTo(-50,i*13); g.lineTo(50,i*13); g.stroke();
+          g.restore();
+        }
+        g.strokeStyle=rgba(PAL.star,.5); g.lineWidth=2;
+        g.beginPath(); g.arc(0,0,46,0,TAU); g.stroke();
+        gloss(g, 38, .3);
+      }), 0, 0, 108, 108, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(1);
+        ctx.beginPath(); ctx.arc(0,0,46,0,TAU); ctx.fill(); }
+      ctx.strokeStyle=rgba(PAL.boss,.95); ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(0,0,46,0,TAU); ctx.stroke();
+      /* the opening itself — the readout, unchanged */
+      const op = 10 + (5-Math.min(5,b.phase))*5;   /* the door opens by PHASE, not by a timer */
+      ctx.beginPath(); ctx.arc(0,0,op+Math.sin(b.t*4)*3,0,TAU);
+      ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      /* a leaf of the lid, on its exact triangle */
+      ctx.beginPath(); ctx.moveTo(-10,-24); ctx.lineTo(22,0); ctx.lineTo(-10,24); ctx.closePath();
+      const g = ctx.createLinearGradient(-10,0,22,0);
+      g.addColorStop(0, rgba(PAL.foeDark,1)); g.addColorStop(1, rgba(PAL.foe,1));
+      ctx.fillStyle=g; ctx.fill();
+      /* space strokes this in PAL.crystal, a player key. Enemy band. */
+      ctx.strokeStyle=rgba(PAL.elaser,.95); ctx.lineWidth=2.2; ctx.stroke();
+      ctx.strokeStyle='rgba(255,255,255,.25)'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(-6,-12); ctx.lineTo(14,0); ctx.moveTo(-6,12); ctx.lineTo(14,0); ctx.stroke();
     }
   }
 };
