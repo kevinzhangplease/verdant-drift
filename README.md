@@ -3,10 +3,11 @@
 A single-file, mobile-first arcade vertical scrolling shooter. Twelve sectors, each
 with its own palette, enemy roster, audio mode, and hazard — bound together by one rule:
 
-> **Legibility is not negotiable.** Every sector changes palette, but two things never
-> change: your fire is always cyan-white (cool), and enemy fire is always in the
-> hot magenta-to-orange band. Beauty is allowed to do anything except make the
-> screen harder to read.
+> **Legibility is not negotiable.** Every sector changes palette, but one thing never
+> changes: *the player's band and the enemy's band never overlap*, and each skin declares
+> which hues they are. In **Space** your fire is cyan-white and theirs is hot magenta-to-orange.
+> **Picnic** inverts it — your ketchup is warm, their fire is cool — and is legible for exactly
+> the same reason. Beauty is allowed to do anything except make the screen harder to read.
 
 ## Play
 
@@ -16,7 +17,11 @@ PWA — installable and playable offline.
 
 ## Features
 
-- **Twelve sectors**, 24 bosses, adaptive per-sector procedural music (Web Audio).
+- **Twelve sectors**, 24 bosses, adaptive per-sector procedural music (Web Audio) — twelve
+  modes per skin, one for each sector.
+- **Two skins** — *Space*, the drift; and *Picnic*, where everything is food. A skin changes
+  only how the game looks and sounds: same seed, same run, right down to the frame. Switchable
+  at any time, including mid-fight.
 - **Chain + graze scoring** — kills build a ×8 chain; *grazing* enemy fire (flying
   close without being hit) pushes the multiplier all the way to ×16.
 - **Focus / bomb / upgrades / relics**, checkpoints, three difficulties, five speeds.

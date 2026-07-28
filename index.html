@@ -2426,6 +2426,10 @@ function applySkin(key){
   for (const k in css) root.style.setProperty('--'+k, css[k]);
   spriteCache.clear(); blanketPat = null;   /* both are baked per skin */
   skinHazard(hazard);                        /* re-point the drawing, keep the hazard's state */
+  /* the score follows the skin. modes() is read per call, so the band changes at the next
+     scheduled beat rather than needing the music stopped — re-assert the index so a switch
+     can never leave a stale mode behind. */
+  if (typeof levelIdx === 'number') Sound.setMode(levelIdx);
   /* applyPalette above already rebuilt the nebula and starfield, and nothing else here
      is baked at boot — so this is safe to call mid-fight */
 }
@@ -2450,7 +2454,7 @@ function applyPalette(i){
 /* ============================================================
    3 · audio — a different mode per sector
    ============================================================ */
-const MODES = [
+const MODES_SPACE = [
   { roots:[110,87.31,130.81,98],     chords:[[220,261.63,329.63],[174.61,220,261.63],[261.63,329.63,392],[196,246.94,392]],
     scale:[440,523.25,587.33,659.25,783.99], swing:1,  drums:1 },
   { roots:[73.42,98,87.31,65.41],    chords:[[146.83,174.61,220],[196,246.94,293.66],[174.61,220,261.63],[130.81,164.81,196]],
@@ -2462,8 +2466,219 @@ const MODES = [
   { roots:[87.31,69.3,103.83,77.78], chords:[[174.61,207.65,261.63],[138.59,164.81,207.65],[207.65,246.94,311.13],[155.56,185,233.08]],
     scale:[349.23,415.3,466.16,554.37,622.25], swing:1.5, drums:.5 },
   { roots:[130.81,98,110,87.31],     chords:[[261.63,329.63,392],[196,246.94,293.66],[220,261.63,329.63],[174.61,220,261.63]],
-    scale:[523.25,659.25,783.99,880,1046.5], swing:.85, drums:1.2 }
+    scale:[523.25,659.25,783.99,880,1046.5], swing:.85, drums:1.2 },
+  /* ---- campaign two. PALETTES was extended to twelve sectors but MODES never was, so
+     setMode(6..11) left MODES[mode] undefined and schedule() threw every 25ms — the second
+     campaign had no music at all. Phase 5 patched that by wrapping (i % length), which gave
+     sectors 7-12 the sound of sectors 1-6. These are the six that were missing. ---- */
+  /* 7 ashen — what the star left behind: minor, sparse, almost no kit */
+  { roots:[92.5,69.3,77.78,61.74], chords:[[185,220,277.18],[138.59,174.61,207.65],[155.56,185,233.08],[123.47,155.56,185]],
+    scale:[369.99,440,466.16,554.37,622.25], swing:1.35, drums:.35 },
+  /* 8 coral — it is growing while you fly: bright, but not in your key */
+  { roots:[103.83,87.31,116.54,77.78], chords:[[207.65,261.63,311.13],[174.61,220,261.63],[233.08,293.66,349.23],[155.56,196,233.08]],
+    scale:[415.3,466.16,523.25,622.25,698.46], swing:.8, drums:1.25 },
+  /* 9 choir — everything here keeps time: modal and vocal, the kit dead on the grid */
+  { roots:[110,110,146.83,98], chords:[[220,277.18,329.63],[220,261.63,329.63],[293.66,349.23,440],[196,246.94,293.66]],
+    scale:[440,493.88,554.37,659.25,739.99], swing:1, drums:1.4 },
+  /* 10 weave — space here is threaded wrong: the root moves under you */
+  { roots:[87.31,116.54,92.5,123.47], chords:[[174.61,207.65,261.63],[233.08,277.18,349.23],[185,233.08,277.18],[246.94,311.13,369.99]],
+    scale:[349.23,415.3,466.16,554.37,659.25], swing:1.1, drums:.75 },
+  /* 11 marrow — you are inside something: low, heavy, breathing */
+  { roots:[58.27,61.74,49,55], chords:[[116.54,146.83,174.61],[123.47,155.56,185],[98,123.47,146.83],[110,138.59,164.81]],
+    scale:[233.08,277.18,311.13,369.99,415.3], swing:1.45, drums:1.5 },
+  /* 12 aperture — the last door: it finally resolves */
+  { roots:[65.41,98,87.31,130.81], chords:[[130.81,164.81,196],[196,246.94,293.66],[174.61,220,261.63],[261.63,329.63,392]],
+    scale:[523.25,587.33,659.25,783.99,880], swing:.95, drums:1.1 }
 ];
+
+/* Picnic's twelve. Major or mixolydian throughout, a lazier swing, and the kit brushed rather
+   than kicked — the same twelve sector identities, played by a band sitting on a blanket. */
+const MODES_PICNIC = [
+  /* 1 fresh greens */
+  { roots:[130.81,98,110,87.31], chords:[[261.63,329.63,392],[196,246.94,293.66],[220,277.18,329.63],[174.61,220,261.63]],
+    scale:[523.25,587.33,659.25,783.99,880], swing:1.15, drums:.7 },
+  /* 2 the charcoal grill */
+  { roots:[116.54,87.31,98,77.78], chords:[[233.08,293.66,349.23],[174.61,220,261.63],[196,246.94,293.66],[155.56,196,233.08]],
+    scale:[466.16,523.25,587.33,698.46,783.99], swing:1.25, drums:.95 },
+  /* 3 jam and preserves */
+  { roots:[110,82.41,92.5,73.42], chords:[[220,277.18,329.63],[164.81,207.65,246.94],[185,233.08,277.18],[146.83,185,220]],
+    scale:[440,493.88,554.37,659.25,739.99], swing:1.3, drums:.8 },
+  /* 4 the cheese board */
+  { roots:[123.47,92.5,103.83,82.41], chords:[[246.94,311.13,369.99],[185,233.08,277.18],[207.65,261.63,311.13],[164.81,207.65,246.94]],
+    scale:[493.88,554.37,622.25,739.99,830.61], swing:1.05, drums:.85 },
+  /* 5 seafood on ice — the coolest of the twelve, and the sparsest */
+  { roots:[98,73.42,82.41,65.41], chords:[[196,246.94,293.66],[146.83,185,220],[164.81,207.65,246.94],[130.81,164.81,196]],
+    scale:[392,440,493.88,587.33,659.25], swing:1.4, drums:.45 },
+  /* 6 afternoon tea */
+  { roots:[87.31,116.54,98,130.81], chords:[[174.61,220,261.63],[233.08,293.66,349.23],[196,246.94,293.66],[261.63,329.63,392]],
+    scale:[349.23,392,440,523.25,587.33], swing:1.2, drums:.6 },
+  /* 7 crumbs after — the plates are empty and the band has thinned out */
+  { roots:[82.41,61.74,73.42,55], chords:[[164.81,207.65,246.94],[123.47,155.56,185],[146.83,185,220],[110,138.59,164.81]],
+    scale:[329.63,369.99,415.3,493.88,554.37], swing:1.45, drums:.4 },
+  /* 8 fruit salad */
+  { roots:[146.83,110,123.47,98], chords:[[293.66,369.99,440],[220,277.18,329.63],[246.94,311.13,369.99],[196,246.94,293.66]],
+    scale:[587.33,659.25,739.99,880,987.77], swing:.9, drums:1.15 },
+  /* 9 lemonade */
+  { roots:[130.81,98,116.54,87.31], chords:[[261.63,329.63,392],[196,246.94,293.66],[233.08,293.66,349.23],[174.61,220,261.63]],
+    scale:[523.25,587.33,659.25,783.99,932.33], swing:1, drums:1.05 },
+  /* 10 the wicker basket */
+  { roots:[103.83,77.78,87.31,69.3], chords:[[207.65,261.63,311.13],[155.56,196,233.08],[174.61,220,261.63],[138.59,174.61,207.65]],
+    scale:[415.3,466.16,523.25,622.25,698.46], swing:1.3, drums:.9 },
+  /* 11 inside the hamper — close, warm, muffled */
+  { roots:[65.41,87.31,73.42,98], chords:[[130.81,164.81,196],[174.61,220,261.63],[146.83,185,220],[196,246.94,293.66]],
+    scale:[261.63,329.63,392,440,523.25], swing:1.5, drums:1.3 },
+  /* 12 sunset picnic — everyone packs up and it resolves home */
+  { roots:[98,130.81,110,146.83], chords:[[196,246.94,293.66],[261.63,329.63,392],[220,277.18,329.63],[293.66,369.99,440]],
+    scale:[392,440,493.88,587.33,659.25], swing:1.1, drums:.75 }
+];
+
+/* Which twelve are playing. Read per call, so switching skin mid-run changes the score at the
+   next scheduled beat rather than needing the music stopped and restarted. */
+function modes(){ return skinKey==='picnic' ? MODES_PICNIC : MODES_SPACE; }
+
+/* ---- the sound bank (#22) -------------------------------------------------------
+   Same shape as the art layer, for the same reason: the voices below live on Sound as the
+   SPACE bank, and a skin supplies overrides here. Anything a skin does not override keeps
+   the space voice, so this can be partial without going quiet. The ~40 existing call sites
+   (Sound.shot(), Sound.boom(1.3), …) are untouched.
+
+   Picnic's rule of thumb: sine and triangle where space used square and saw, shorter and
+   rounder envelopes, and noise filtered down to a thud rather than left bright. Nothing here
+   is louder than the space voice it replaces. */
+const SFX = {
+  picnic: {
+    /* a ketchup bottle being squeezed: a short parp, pitched down, no edge on it */
+    shot(){ const t=this.ac.currentTime;
+      const o=this.ac.createOscillator(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      o.type='triangle'; o.frequency.setValueAtTime(520,t); o.frequency.exponentialRampToValueAtTime(210,t+.075);
+      f.type='lowpass'; f.frequency.value=1800;
+      g.gain.setValueAtTime(.075,t); g.gain.exponentialRampToValueAtTime(.001,t+.085);
+      o.connect(f); f.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.095); },
+
+    /* a splat, not a fireball: filtered noise with a wet low thump under it */
+    boom(size){ const t=this.ac.currentTime;
+      const s=this.ac.createBufferSource(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      s.buffer=this.noiseBuf(); f.type='lowpass';
+      f.frequency.setValueAtTime(900*size,t); f.frequency.exponentialRampToValueAtTime(90,t+.3*size);
+      g.gain.setValueAtTime(.26*size,t); g.gain.exponentialRampToValueAtTime(.001,t+.42*size);
+      s.connect(f); f.connect(g); g.connect(this.sGain); s.start(t); s.stop(t+.46*size);
+      const o=this.ac.createOscillator(), og=this.ac.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(180*size,t); o.frequency.exponentialRampToValueAtTime(46,t+.22*size);
+      og.gain.setValueAtTime(.2*size,t); og.gain.exponentialRampToValueAtTime(.001,t+.3*size);
+      o.connect(og); og.connect(this.sGain); o.start(t); o.stop(t+.32*size); },
+
+    /* a sprinkle landing: a little glassy pop up the octave */
+    pickup(){ const t=this.ac.currentTime;
+      const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(880,t); o.frequency.exponentialRampToValueAtTime(1760,t+.08);
+      g.gain.setValueAtTime(.12,t); g.gain.exponentialRampToValueAtTime(.001,t+.13);
+      o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.15); },
+
+    /* a spoon on a glass */
+    chime(n){ const t=this.ac.currentTime;
+      const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='sine'; o.frequency.value=660*Math.pow(1.0595,n*2);
+      g.gain.setValueAtTime(.10,t); g.gain.exponentialRampToValueAtTime(.001,t+.42);
+      o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.44);
+      const o2=this.ac.createOscillator(), g2=this.ac.createGain();
+      o2.type='sine'; o2.frequency.value=660*Math.pow(1.0595,n*2)*3.01;
+      g2.gain.setValueAtTime(.03,t); g2.gain.exponentialRampToValueAtTime(.001,t+.2);
+      o2.connect(g2); g2.connect(this.sGain); o2.start(t); o2.stop(t+.22); },
+
+    /* something dropped on the blanket: a dull knock, no saw buzz */
+    hurt(){ const t=this.ac.currentTime;
+      const o=this.ac.createOscillator(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      o.type='triangle'; o.frequency.setValueAtTime(210,t); o.frequency.exponentialRampToValueAtTime(48,t+.3);
+      f.type='lowpass'; f.frequency.value=900;
+      g.gain.setValueAtTime(.24,t); g.gain.exponentialRampToValueAtTime(.001,t+.38);
+      o.connect(f); f.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.4); },
+
+    /* the bomb is a shaken fizzy drink: the hiss opens, then the can gives */
+    bombFx(){ const t=this.ac.currentTime;
+      const s=this.ac.createBufferSource(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      s.buffer=this.noiseBuf(); f.type='bandpass'; f.Q.value=.8;
+      f.frequency.setValueAtTime(400,t); f.frequency.exponentialRampToValueAtTime(5200,t+.3);
+      f.frequency.exponentialRampToValueAtTime(300,t+1);
+      g.gain.setValueAtTime(.02,t); g.gain.linearRampToValueAtTime(.34,t+.28);
+      g.gain.exponentialRampToValueAtTime(.001,t+1.05);
+      s.connect(f); f.connect(g); g.connect(this.sGain); s.start(t); s.stop(t+1.1);
+      const o=this.ac.createOscillator(), og=this.ac.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(320,t+.26); o.frequency.exponentialRampToValueAtTime(70,t+.5);
+      og.gain.setValueAtTime(.001,t); og.gain.setValueAtTime(.3,t+.26);
+      og.gain.exponentialRampToValueAtTime(.001,t+.6);
+      o.connect(og); og.connect(this.sGain); o.start(t); o.stop(t+.62); },
+
+    /* three rings of a picnic bell instead of a klaxon — still three, still on the same beats */
+    alarm(){ const t=this.ac.currentTime;
+      for (let i=0;i<3;i++){
+        const tt=t+i*.22;
+        for (const [mul,vol] of [[1,.09],[2.76,.035],[5.4,.015]]){
+          const o=this.ac.createOscillator(), g=this.ac.createGain();
+          o.type='sine'; o.frequency.value=524*mul;
+          g.gain.setValueAtTime(0,tt); g.gain.linearRampToValueAtTime(vol,tt+.008);
+          g.gain.exponentialRampToValueAtTime(.001,tt+.42);
+          o.connect(g); g.connect(this.sGain); o.start(tt); o.stop(tt+.44);
+        }
+      } },
+
+    /* the graze pip: a fingertip on a wine glass rim */
+    tick(n){ const t=this.ac.currentTime;
+      const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='sine'; o.frequency.value=1046*Math.pow(1.0595,n);
+      g.gain.setValueAtTime(.028,t); g.gain.exponentialRampToValueAtTime(.001,t+.10);
+      o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.11); },
+
+    /* ---- the band, not the synth ---- */
+
+    /* an accordion-ish pad: triangles instead of detuned saws, and it breathes in rather
+       than stabbing */
+    pad(freqs,t,dur){
+    const _v=voice('pad'); if (_v) return _v.call(this,freqs,t,dur);
+      const g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      g.gain.value=0; f.type='lowpass'; f.frequency.value=900+this.intensity*1100;
+      g.connect(f); f.connect(this.mGain);
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(.15,t+1.1);
+      g.gain.linearRampToValueAtTime(0,t+dur);
+      freqs.forEach((fr,i)=>[-6,6].forEach(d=>{
+        const o=this.ac.createOscillator(); o.type='triangle';
+        o.frequency.value=fr; o.detune.value=d+i*3;
+        o.connect(g); o.start(t); o.stop(t+dur+.05);
+      })); },
+
+    /* upright bass: rounder, shorter, plucked */
+    bass(fr,t){ const _v=voice('bass'); if (_v) return _v.call(this,fr,t);
+    const o=this.ac.createOscillator(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      o.type='sine'; o.frequency.value=fr; f.type='lowpass'; f.frequency.value=520;
+      o.connect(f); f.connect(g); g.connect(this.mGain);
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(.32,t+.03);
+      g.gain.exponentialRampToValueAtTime(.001,t+.42);
+      o.start(t); o.stop(t+.45); },
+
+    /* the arp is a glockenspiel */
+    arp(fr,t,v){ const _v=voice('arp'); if (_v) return _v.call(this,fr,t,v);
+    const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='sine'; o.frequency.value=fr*2;
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(v*.85,t+.006);
+      g.gain.exponentialRampToValueAtTime(.001,t+.34);
+      o.connect(g); g.connect(this.mGain); o.start(t); o.stop(t+.36); },
+
+    /* a soft kit: the kick is a cardboard thump */
+    kick(t){ const _v=voice('kick'); if (_v) return _v.call(this,t);
+    const o=this.ac.createOscillator(), g=this.ac.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(96,t); o.frequency.exponentialRampToValueAtTime(44,t+.09);
+      g.gain.setValueAtTime(.34,t); g.gain.exponentialRampToValueAtTime(.001,t+.18);
+      o.connect(g); g.connect(this.mGain); o.start(t); o.stop(t+.2); },
+
+    /* and the hat is a brush, not a hiss */
+    hat(t,v){ const _v=voice('hat'); if (_v) return _v.call(this,t,v);
+    const s=this.ac.createBufferSource(), g=this.ac.createGain(), f=this.ac.createBiquadFilter();
+      s.buffer=this.noiseBuf(); f.type='bandpass'; f.frequency.value=4200; f.Q.value=.7;
+      g.gain.setValueAtTime(v*.8,t); g.gain.exponentialRampToValueAtTime(.001,t+.09);
+      s.connect(f); f.connect(g); g.connect(this.mGain); s.start(t); s.stop(t+.1); }
+  }
+};
+/* Resolve one voice for the current skin, or null to fall through to the space one. */
+function voice(name){ const b = SFX[skinKey]; return (b && b[name]) || null; }
 const Sound = {
   ac:null, master:null, mGain:null, sGain:null, ready:false, muted:false,
   intensity:0, targetIntensity:0, beat:0, next:0, mode:0,
@@ -2480,13 +2695,15 @@ const Sound = {
   },
   resume(){ if (this.ac && this.ac.state==='suspended') this.ac.resume(); },
   setMuted(m){ this.muted=m; if (this.master) this.master.gain.value = m?0:.9; },
-  /* PALETTES was extended to twelve sectors but MODES never was, so setMode(6..11) left
-     MODES[this.mode] undefined and schedule() threw every 25ms — the whole second campaign
-     has been playing in silence. Wrap until campaign two gets its own six modes. */
-  setMode(i){ this.mode = i % MODES.length; },
+  /* Both tables are twelve long now, so this no longer wraps: sectors 7-12 have their own
+     modes rather than replaying 1-6. The modulo stays as a guard, not as the mechanism.
+     History: MODES had six entries for twelve sectors, so setMode(6..11) left MODES[mode]
+     undefined and schedule() threw every 25ms — the whole second campaign played in silence.
+     Phase 5 patched it by wrapping; S7 gave it the six modes it was missing. */
+  setMode(i){ this.mode = i % modes().length; },
   schedule(){
     if (!this.ready) return;
-    const M = MODES[this.mode], spb = 60/96/2*M.swing;
+    const M = modes()[this.mode], spb = 60/96/2*M.swing;
     this.intensity += (this.targetIntensity - this.intensity)*.04;
     while (this.next < this.ac.currentTime + .15){
       const b = this.beat, bar = Math.floor(b/8)%4, t = this.next;
@@ -2537,40 +2754,48 @@ const Sound = {
   _lastShot:0,
   shot(){ if (!this.ready) return; const t=this.ac.currentTime;
     if (t-this._lastShot<.05) return; this._lastShot=t;
+    /* the rate limit is the engine's, not the bank's — both skins get it */
+    const _v=voice('shot'); if (_v) return _v.call(this);
     const o=this.ac.createOscillator(),g=this.ac.createGain(),f=this.ac.createBiquadFilter();
     o.type='square'; o.frequency.setValueAtTime(1250,t); o.frequency.exponentialRampToValueAtTime(420,t+.07);
     f.type='bandpass'; f.frequency.value=1500; f.Q.value=1.2;
     g.gain.setValueAtTime(.085,t); g.gain.exponentialRampToValueAtTime(.001,t+.08);
     o.connect(f); f.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.09); },
-  boom(size){ if (!this.ready) return; const t=this.ac.currentTime;
+  boom(size){ if (!this.ready) return; const _v=voice('boom'); if (_v) return _v.call(this,size);
+    const t=this.ac.currentTime;
     const s=this.ac.createBufferSource(),g=this.ac.createGain(),f=this.ac.createBiquadFilter();
     s.buffer=this.noiseBuf(); f.type='lowpass';
     f.frequency.setValueAtTime(2400*size,t); f.frequency.exponentialRampToValueAtTime(120,t+.4*size);
     g.gain.setValueAtTime(.32*size,t); g.gain.exponentialRampToValueAtTime(.001,t+.5*size);
     s.connect(f); f.connect(g); g.connect(this.sGain); s.start(t); s.stop(t+.55*size); },
-  pickup(){ if (!this.ready) return; const t=this.ac.currentTime;
+  pickup(){ if (!this.ready) return; const _v=voice('pickup'); if (_v) return _v.call(this);
+    const t=this.ac.currentTime;
     const o=this.ac.createOscillator(),g=this.ac.createGain();
     o.type='sine'; o.frequency.setValueAtTime(660,t); o.frequency.exponentialRampToValueAtTime(1320,t+.11);
     g.gain.setValueAtTime(.14,t); g.gain.exponentialRampToValueAtTime(.001,t+.16);
     o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.18); },
-  chime(n){ if (!this.ready) return; const t=this.ac.currentTime;
+  chime(n){ if (!this.ready) return; const _v=voice('chime'); if (_v) return _v.call(this,n);
+    const t=this.ac.currentTime;
     const o=this.ac.createOscillator(),g=this.ac.createGain();
     o.type='triangle'; o.frequency.value=520*Math.pow(1.0595,n*2);
     g.gain.setValueAtTime(.11,t); g.gain.exponentialRampToValueAtTime(.001,t+.25);
     o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.26); },
-  hurt(){ if (!this.ready) return; const t=this.ac.currentTime;
+  hurt(){ if (!this.ready) return; const _v=voice('hurt'); if (_v) return _v.call(this);
+    const t=this.ac.currentTime;
     const o=this.ac.createOscillator(),g=this.ac.createGain();
     o.type='sawtooth'; o.frequency.setValueAtTime(300,t); o.frequency.exponentialRampToValueAtTime(60,t+.4);
     g.gain.setValueAtTime(.22,t); g.gain.exponentialRampToValueAtTime(.001,t+.45);
     o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.46); },
-  bombFx(){ if (!this.ready) return; const t=this.ac.currentTime;
+  bombFx(){ if (!this.ready) return; const _v=voice('bombFx'); if (_v) return _v.call(this);
+    const t=this.ac.currentTime;
     const s=this.ac.createBufferSource(),g=this.ac.createGain(),f=this.ac.createBiquadFilter();
     s.buffer=this.noiseBuf(); f.type='lowpass';
     f.frequency.setValueAtTime(200,t); f.frequency.exponentialRampToValueAtTime(6000,t+.25);
     f.frequency.exponentialRampToValueAtTime(200,t+.9);
     g.gain.setValueAtTime(.4,t); g.gain.exponentialRampToValueAtTime(.001,t+1);
     s.connect(f); f.connect(g); g.connect(this.sGain); s.start(t); s.stop(t+1.05); },
-  alarm(){ if (!this.ready) return; const t=this.ac.currentTime;
+  alarm(){ if (!this.ready) return; const _v=voice('alarm'); if (_v) return _v.call(this);
+    const t=this.ac.currentTime;
     for (let i=0;i<3;i++){ const o=this.ac.createOscillator(),g=this.ac.createGain();
       o.type='square'; o.frequency.value=220; const tt=t+i*.22;
       g.gain.setValueAtTime(0,tt); g.gain.linearRampToValueAtTime(.1,tt+.02); g.gain.exponentialRampToValueAtTime(.001,tt+.18);
@@ -2584,13 +2809,14 @@ const Sound = {
   _lastTick:0,
   tick(n){ if (!this.ready) return; const t=this.ac.currentTime;
     if (t-this._lastTick<.055) return; this._lastTick=t;
+    const _v=voice('tick'); if (_v) return _v.call(this,n);
     const o=this.ac.createOscillator(), g=this.ac.createGain();
     o.type='sine'; o.frequency.value=880*Math.pow(1.0595,n);
     g.gain.setValueAtTime(.035,t); g.gain.exponentialRampToValueAtTime(.001,t+.07);
     o.connect(g); g.connect(this.sGain); o.start(t); o.stop(t+.08); },
   /* the victory sting: a rising run through the sector's own scale, so it resolves in key */
   fanfare(tier){ if (!this.ready) return;
-    const t=this.ac.currentTime+.06, M=MODES[this.mode], sc=M.scale;
+    const t=this.ac.currentTime+.06, M=modes()[this.mode], sc=M.scale;
     const steps = tier>=2 ? 6 : tier>=1 ? 5 : 4, gap = .085;
     for (let i=0;i<steps;i++){
       const fr = sc[i%sc.length]*(i>=sc.length?2:1)*(i>=sc.length*2?2:1);
