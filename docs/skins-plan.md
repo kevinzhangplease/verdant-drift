@@ -78,11 +78,12 @@ Three things that repeatedly paid off, and one repeated trap:
   confident, wrong bug report before the scaffolding was suspected. Confirm a finding against the
   unmodified build before believing it.
 
-### An open aesthetic question
+### The open aesthetic question, now closed by default
 
-The picnic palette and the ketchup bottle are guesses at "pastel, kid-friendly". Everything from
-S5 onward inherits them. If they are not right, redirect **before** ~45 more draw functions are
-authored against them — that is by far the cheapest moment.
+The picnic palette and the ketchup bottle were guesses at "pastel, kid-friendly", and every
+later stage was authored against them. They were never redirected, so the whole skin now rests
+on them. Changing the base palette is still cheap (one table); changing the *subjects* — bottle,
+blueberry, blanket — is no longer, because ~65 draw functions assume them.
 
 ---
 
@@ -119,7 +120,10 @@ where a player colour had leaked into enemy art; that must not regress.)
 | S4b spreads & hazards | shipped `36c81bd` — 12 picnic sectors, 10 hazards, hard cool band |
 | S5 enemies | shipped `33e7dbc` — all 19 types as food, cool-band roster |
 | S6 bosses | shipped `23e9772`, `9ef46b8` — all 24 as food |
-| S7 | **next** — audio: sound bank split and the 12-sector picnic score |
+| S7 audio | shipped `970dc5a` — bank split, picnic voices, 12 modes per skin |
+
+**Phase 6 is complete.** Both skins are finished end to end: palette, chrome, player, world,
+hazards, 19 enemies, 24 bosses and audio.
 
 ### S0 — the determinism hunt (resolved)
 
@@ -201,16 +205,15 @@ Determinism is safe here because cosmetic randomness draws from `_fxRng`, a sepa
 the seeded simulation. Skin switching therefore cannot desync a run — but verification must prove
 it, since that is the whole promise.
 
-### S5. Audio
+### S5. Audio *(shipped)*
 
-`SOUNDBANK = { space:{…}, picnic:{…} }` exposing the same method names (`shot, boom, pickup,
-chime, hurt, bombFx, alarm, fanfare, tick`) plus a 12-entry `MODES` table, so the ~40 existing
-call sites are untouched. Picnic: softer waveforms (sine/triangle over square/saw), major-mode
-progressions, squelches and pops and bottle-squeezes in place of zaps and booms.
+`SFX = { picnic:{…} }` overriding voices that otherwise stay on `Sound` as the space bank —
+the art layer's fallback pattern, not a parallel structure. Picnic overrides thirteen voices;
+`fanfare` is deliberately left alone so it inherits picnic's `pad` and picnic's scale for free.
 
-**Fix while here:** `MODES` had only 6 entries for 12 sectors, so sectors 7–12 threw every 25ms
-and had no music at all. Phase 5 patched it by wrapping (`i % MODES.length`); picnic should ship
-12 from the start, and space's six should be extended to a real twelve rather than left wrapping.
+`MODES` became `MODES_SPACE` and `MODES_PICNIC`, twelve each, selected by `modes()` which is read
+per call so a mid-run skin switch changes the score at the next beat. Space's missing six were
+written rather than left wrapping — sectors 7–12 no longer replay 1–6.
 
 ### S6. Chrome
 
