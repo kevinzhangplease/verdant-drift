@@ -37,6 +37,14 @@ way to avoid repeating a dead end.
 2. **Legibility.** The player band and the enemy band never overlap; each skin declares which
    hues they are. `bandOf()` exists to make this testable. Picnic deliberately inverts space's
    convention (warm player, cool enemy) and is legible for the same reason.
+
+   Two things S4b established. **Picnic holds a hard cool band** — all five enemy keys stay in
+   170–290° in every one of its twelve sectors, because its warm player band leaves no room to
+   vary enemy hue the way space does; sector identity lives in the cloth instead. And **space
+   does not hold the rule it states**: its `missile` is amber, inside its own enemy band, and in
+   sectors 5 and 8 even `bolt` lands within 3° of the boss/elaser hue. That is pre-existing and
+   deliberately untouched — but do not treat space as the reference implementation of the
+   invariant, because it isn't one.
 3. **Hitboxes are sacred.** A skin applies food to the *existing* geometry — same radius, same
    part count, same part positions. Never adjust gameplay shape to suit the art.
 
@@ -108,8 +116,9 @@ where a player colour had leaked into enemy art; that must not regress.)
 | S3 player art | shipped `e87b368` — art dispatch + fallback, sprite cache, semi-3D helpers, ketchup bottle |
 | S4a blanket | shipped `952eb2e` — gingham background, crumbs/ants |
 | S0 determinism | shipped `e11bf77` — root cause found and fixed; see below |
-| S4b | **next** — 12 sector variants + 12 hazards |
-| S5 / S6 / S7 | 21 enemies · 24 bosses · audio |
+| S4b spreads & hazards | shipped `36c81bd` — 12 picnic sectors, 10 hazards, hard cool band |
+| S5 | **next** — 21 common enemies as food, in two batches |
+| S6 / S7 | 24 bosses · audio |
 
 ### S0 — the determinism hunt (resolved)
 
@@ -272,8 +281,16 @@ evidence.
    each skin to confirm by eye.
 4. **Fallback coverage** — with picnic selected, spawn every enemy type and all 24 bosses and
    assert each renders (its own art or the fallback) with no errors.
-5. **Performance** — frame time at peak density in picnic within ~15% of space, given the sprite
-   cache. Check at `qLevel 0` that shadows drop and the silhouette survives.
+5. **Performance** — check at `qLevel 0` that shadows drop and the silhouette survives.
+
+   **The skin-to-skin ratio is not currently answerable in this environment.** S4b tried: with
+   medians of five interleaved samples, untouched sectors still swung between −11% and +19%
+   across runs, so inter-run drift in the headless software rasteriser exceeds the effect being
+   measured. Large-area fills — which is exactly what picnic's cloth is — are the workload a
+   software rasteriser punishes most and a real GPU handles best, so a bad number here is weak
+   evidence of a real problem. Profile *layers against each other in the same run* instead
+   (stub `ART.picnic.background` / `.stars` / a hazard and difference the timings); that is
+   stable and it is what found the two real costs S4b fixed. Settle the ratio on a device.
 6. **Persistence** — skin survives reload; a save written before this feature loads with a
    defensive default.
 7. **Regression** — the Phase 5 boss sweep still passes in both skins.
