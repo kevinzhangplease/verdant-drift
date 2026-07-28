@@ -530,6 +530,54 @@ ART.picnic.crystal = function(p,pulse){
   addGlow(p.x,p.y,9,PAL.crystal,.3);
 };
 
+/* ---- picnic: the world ---------------------------------------------------------
+   The blanket is one tile painted once and repeated, scrolled on the same scrollY the
+   starfield used — so it costs a single pattern fill per frame rather than a grid of rects. */
+let blanketPat = null;
+function blanketPattern(){
+  if (blanketPat) return blanketPat;
+  const T = 96, c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d');
+  const base = PAL.void, band = PAL.neb[0], band2 = PAL.neb[1];
+  g.fillStyle = rgba(base,1); g.fillRect(0,0,T,T);
+  /* gingham: two translucent bands crossing, so the overlap reads darker on its own */
+  g.fillStyle = rgba(band,.55); g.fillRect(0,0,T/2,T);
+  g.fillStyle = rgba(band2,.45); g.fillRect(0,0,T,T/2);
+  /* weave texture */
+  g.strokeStyle = 'rgba(255,255,255,.05)'; g.lineWidth = 1;
+  for (let i=0;i<T;i+=6){ g.beginPath(); g.moveTo(i,0); g.lineTo(i,T); g.stroke(); }
+  blanketPat = ctx.createPattern(c,'repeat');
+  return blanketPat;
+}
+ART.picnic.background = function(dt){
+  const pat = blanketPattern();
+  ctx.save();
+  ctx.translate(0, (scrollY*.5) % 96);
+  ctx.fillStyle = pat;
+  ctx.fillRect(0, -96, W, H+192);
+  ctx.restore();
+  /* a soft sunlit falloff so the blanket has some depth rather than reading flat */
+  const g = ctx.createRadialGradient(W*.5,H*.18,0, W*.5,H*.18, Math.max(W,H)*.9);
+  g.addColorStop(0,'rgba(255,248,214,.20)'); g.addColorStop(1,'rgba(60,80,50,.22)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+};
+/* crumbs and ants instead of stars — same data, different read */
+ART.picnic.stars = function(dt){
+  const spd = state==='playing' ? 1 : .35;
+  for (let l=0;l<3;l++){
+    for (const st of stars[l]){
+      st.y += st.s*dt*spd; if (st.y>H){ st.y=-4; st.x=frnd(0,W); }
+      const crumb = (st.r>1.0);
+      ctx.fillStyle = crumb ? 'rgba(122,86,54,.55)' : rgba(PAL.star,.5);
+      ctx.beginPath();
+      if (crumb) ctx.ellipse(st.x,st.y,st.r*1.5,st.r*1.1,st.tw,0,TAU);
+      else ctx.arc(st.x,st.y,st.r*.8,0,TAU);
+      ctx.fill();
+    }
+  }
+};
+
 function applySkin(key){
   if (!SKIN[key]) key = 'space';
   skinKey = key;
@@ -537,7 +585,7 @@ function applySkin(key){
   applyPalette(typeof levelIdx==='number' ? levelIdx : 0);   /* re-layer the sector variant */
   const css = SKIN_CSS[key], root = document.documentElement;
   for (const k in css) root.style.setProperty('--'+k, css[k]);
-  spriteCache.clear();            /* shading is baked per skin, so it must not survive a swap */
+  spriteCache.clear(); blanketPat = null;   /* both are baked per skin */
   /* applyPalette above already rebuilt the nebula and starfield, and nothing else here
      is baked at boot — so this is safe to call mid-fight */
 }
@@ -4235,7 +4283,10 @@ function render(dt){
   ctx.fillStyle = rgba(PAL.void,1); ctx.fillRect(0,0,W,H);
   ctx.save(); ctx.translate(sx,sy);
 
-  drawNebula(); drawStars(dt); drawDebrisLayer(dt);
+  const bg = art('background'), st = art('stars');
+  if (bg) bg(dt); else drawNebula();
+  if (st) st(dt); else drawStars(dt);
+  drawDebrisLayer(dt);
   if (hazard && state!=='title') hazard.drawBack();
 
   if (state !== 'title'){
