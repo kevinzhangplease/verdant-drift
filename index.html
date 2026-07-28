@@ -593,6 +593,9 @@ let state='title';
 let enemies=[], ebullets=[], pbullets=[], parts=[], pickups=[], drones=[], floats=[], lasers=[], shocks=[], groups=[], ground=[], groundFx=[], warns=[];
 let boss=null, bossMaxHP=0;
 let shake=0, flash=0, hitstop=0, whiteout=0, curveField=0, pullField=0;
+/* boss-owned world state (#21). Every one of these MUST be cleared on both death paths —
+   an arena box left clamped after the kill is an unwinnable run. */
+let arena = null, bossDark = 0;
 let score=0, cores=0, chain=0, chainTimer=0, mult=1;
 /* ---- performance grading (#21) ----------------------------------------------
    The game already tracked everything a grade needs — hits, bombs, graze, peak chain — and
@@ -685,7 +688,7 @@ const PHASE_MIN = 5, DEFAULT_PHASES = [.66,.33];
 function clearField(){
   shieldCount = 0;
   enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[]; warns=[];
-  boss=null; curveField=0; pullField=0;
+  boss=null; curveField=0; pullField=0; arena=null; bossDark=0;
 }
 function resetRun(startLevel){
   clearField();
@@ -754,6 +757,13 @@ function updatePlayer(dt){
     P.tx += Math.cos(a)*pullField*dt; P.ty += Math.sin(a)*pullField*dt;
   }
   P.tx = clamp(P.tx,14,W-14); P.ty = clamp(P.ty,40,H-30);
+  /* a boss can close the walls in; touching them hurts, so it reads as a hazard rather
+     than as the controls sticking */
+  if (arena){
+    const px = P.tx, py = P.ty;
+    P.tx = clamp(P.tx, arena.x0, arena.x1); P.ty = clamp(P.ty, arena.y0, arena.y1);
+    if (px!==P.tx || py!==P.ty) hurtOnSegment(P.tx,P.ty,P.tx,P.ty,2);
+  }
   if (Settings.focusSlow && P.focus){         /* opt-in precision (#12): ease toward the cursor while focusing */
     const e = 1-Math.pow(1-.5, dt*60);
     P.x = lerp(P.x, P.tx, e); P.y = lerp(P.y, P.ty, e);
@@ -881,6 +891,15 @@ function updateShocks(dt){
     for (let j=ebullets.length-1;j>=0;j--){
       const b = ebullets[j], d = Math.hypot(b.x-s.x, b.y-s.y);
       if (d <= s.r && d > prev-40){
+        /* a reflectable shot doesn't dissolve into crystals — the shockwave turns it around
+           and sends it home, so timing a bomb into that attack is worth doing */
+        if (b.refl && !s.harmless){
+          const a = Math.atan2(s.y-b.y, s.x-b.x) + Math.PI;
+          ebullets.splice(j,1);
+          shoot(b.x, b.y, a, Math.min(520, Math.hypot(b.vx,b.vy)*1.15), 4, 0);
+          spark(b.x,b.y,PAL.bolt);
+          continue;
+        }
         if (Math.random()<.5) dropPickup(b.x,b.y,'crystal');
         spark(b.x,b.y,PAL.crystal); ebullets.splice(j,1);
       }
@@ -1310,7 +1329,8 @@ function fireAng(x,y,a,sp,o){
   if (ebullets.length>720) swapDel(ebullets,0);
   const hom=(o&&o.hom)||0, curve=(o&&o.curve)||0, acc=(o&&o.acc)||0;
   ebullets.push({ x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:(o&&o.r)||6, life:(o&&o.life)||8,
-                  t:0, big:(o&&o.big)||false, hom, curve, acc, k:!!(hom||curve||acc) });
+                  t:0, big:(o&&o.big)||false, hom, curve, acc, refl:!!(o&&o.refl),
+                  k:!!(hom||curve||acc) });
 }
 /* Homing always decays, so a bullet you've beaten stays beaten — the turn rate is capped and
    the tracking bleeds off within about a second. Curve composes with the global curveField
@@ -1362,7 +1382,10 @@ function shotgun(x,y,tx,ty,n,spread,sp1,sp2,o){
   const N = n + geoTier()*2;
   for (let i=0;i<N;i++) fireAng(x,y, base+rnd(-spread,spread), rnd(sp1,sp2), o);
 }
-function lance(x,y,a,warn,live){ lasers.push({ x,y,a, warn, live, w:0 }); Sound.alarm(); }
+function lance(x,y,a,warn,live,quiet){ lasers.push({ x,y,a, warn, live, w:0 });
+  /* alarm() already marks boss spawn, phase flip and Break — a boss with several lances
+     turns the one cue that should mean "something changed" into background noise */
+  if (!quiet) Sound.alarm(); }
 /* ---- telegraphs (#21) -------------------------------------------------------
    Until now `lance`'s warn was the only wind-up in the game, and it was laser-shaped:
    rings, walls and rain simply appeared. A tell is what turns a punishing pattern into a
@@ -1698,9 +1721,13 @@ function updateBoss(dt){
       b.phase++; b.phaseT = 0; flash=.35; Sound.alarm(); if (d.onPhase) d.onPhase(b,b.phase);
     }
   }
-  /* beat-locked sniper accent (#8/#10) — a fast aimed shot on the bar cuts through slow curtains */
-  if (beatTick && beatCount%4===0 && b.phase>=2 && P.alive)
-    fireAt(b.x,b.y,P.x,P.y, 430*BV, {r:5});
+  /* beat-locked sniper accent (#8/#10) — a fast aimed shot on the bar cuts through slow curtains.
+     It used to fire for all 24 bosses with no opt-out and no wind-up, which meant a boss built
+     as a pure curtain wore a bolted-on aimed shot it was never designed around. `sniper:null`
+     turns it off; an object overrides the beat, speed and phase. */
+  const sn = d.sniper === undefined ? BOSS_SNIPER : d.sniper;
+  if (sn && beatTick && beatCount%(sn.beat||4)===0 && b.phase>=(sn.from||2) && P.alive)
+    fireAt(b.x,b.y,P.x,P.y, (sn.sp||430)*BV, {r:5});
   /* attacks */
   for (const at of d.attacks){
     if (at.phase && at.phase.indexOf(b.phase)<0) continue;
@@ -1711,12 +1738,19 @@ function updateBoss(dt){
     b.timers[k] -= dt*RATE;
     if (b.timers[k] <= 0){
       b.timers[k] = typeof at.every==='function' ? at.every(b) : at.every;
-      at.fn(b);
+      /* an attack with a `warn` announces itself first: the payload is deferred into the
+         telegraph, which ticks on raw dt so rank and gear can shorten the gap between
+         attacks but never the warning. `cancel` means a boss that dies mid-wind-up doesn't
+         get a free parting shot. */
+      if (at.warn) telegraph(at.warn, b.x, b.y, at.wa ? at.wa(b) : 0, bossTell(at.wd),
+                             { fn:()=>at.fn(b), src:b, follow:true, cancel:true,
+                               r:at.wr||b.r*1.6, n:at.wn||0 });
+      else at.fn(b);
     }
   }
   if (d.tick) d.tick(b,dt);
 }
-function damageBoss(dmg,part){
+function damageBoss(dmg,part,ang){
   const b = boss; if (!b || b.dying) return;   /* a corpse takes no more hits */
   if (part && part.alive){
     part.hp -= dmg; b.flash = .6;
@@ -1735,7 +1769,9 @@ function damageBoss(dmg,part){
       if (b.def.onPartDeath) b.def.onPartDeath(b,part);
     }
   } else {
-    const guard = b.def.coreGuard ? b.def.coreGuard(b) : 0;
+    /* the impact bearing is passed through so a boss can have a seam that only opens from
+       one side; every existing coreGuard ignores the extra arg, so this stays compatible */
+    const guard = b.def.coreGuard ? b.def.coreGuard(b, ang) : 0;
     if (guard >= 1){ b.flash=.3; if (Math.random()<.3) floatText(b.x,b.y-40,'SHIELDED',PAL.ebullet); updateBossBar(); return; }
     b.hp -= dmg*(1-guard); b.flash = 1;
     /* a phase holds until it has played out — burst damage banks against the gate
@@ -1762,6 +1798,13 @@ function damageBoss(dmg,part){
    sequence inherits pause, hitstop and game speed for free, and keeps its randomness on the
    fx stream. `boss` stays non-null until the end, which also means runLevelScript's
    {clear:true} waits out the sequence with no extra plumbing. */
+/* Wind-up length scales with the sector: sector 1 is the tutorial and gets the most
+   generous warning, sector 12 the tightest. Floors at .34s so a tell is always readable. */
+function bossTell(base){
+  const b0 = base || .55;
+  return Math.max(.34, b0 - levelIdx*.016);
+}
+const BOSS_SNIPER = { beat:4, from:2, sp:430 };
 const DEATH_DUR = [1.2, 2.0, 3.0];         /* mid-boss · sector final · campaign final */
 const DEATH_POPS = [7, 12, 18];
 function bossTier(def){
@@ -1814,7 +1857,7 @@ function beginBossDeath(){
   s.hitB.add(b);                           /* never re-enter damageBoss on the corpse */
   shocks.push(s);
   lasers.length = 0; warns.length = 0;
-  curveField = 0; pullField = 0;
+  curveField = 0; pullField = 0; arena = null; bossDark = 0;
 
   /* loot, magnetised so the biggest payout in the game can't be missed */
   const nCry = 16 + tier*6;
@@ -3783,7 +3826,7 @@ function update(dt){
       if (!hit && dist2(b.x,b.y,boss.x,boss.y) < boss.r*boss.r) hit = true;
       if (hit){
         spark(b.x,b.y,PAL.crystal);
-        damageBoss(b.dmg*diff.dmg, hitPart);
+        damageBoss(b.dmg*diff.dmg, hitPart, Math.atan2(b.y-boss.y, b.x-boss.x));
         if (b.pierce>0) b.pierce--; else swapDel(pbullets,i);
       }
     }
@@ -3898,12 +3941,13 @@ function render(dt){
     drawGroundPlane(dt);
     drawGround();
     drawPickups(); drawParticles(); drawEnemies();
-    if (boss) drawBoss();
+    if (boss){ drawPullField(); drawArena(); drawBoss(); }
     drawWarns(); drawLasers(); drawShocks(); drawPlayerBullets(); drawEnemyBullets();
     if (P.alive) drawShip();
     drawGroundFx(dt); drawReticle();
     drawFloats();
     if (hazard) hazard.drawFront();
+    drawBossDark();
   } else { drawParticles(); drawTitleShip(); }
 
   ctx.restore();
@@ -4242,6 +4286,78 @@ function dwAngler(e){
 }
 
 /* --- boss render --- */
+/* pullField was applied silently: three bosses drag the ship and the only feedback was your
+   own drift. Draw-only — a slow counter-rotating ring plus spokes streaming inward, so the
+   well reads as a place the arena is bending rather than as an input bug. */
+/* Reflectable boss fire (#21). The shards hazard already bounces enemy bullets off a mirror
+   line, but it mutates them in place — a "reflected" shot would still belong to the boss and
+   still hurt you. So the geometry comes from shards and the OWNERSHIP trick comes from
+   prismReflect: delete from ebullets, push into pbullets, and the draw pass hands it the cool
+   palette for free. A projectile is whichever array it lives in; there is no flag to get wrong. */
+function reflectBossFire(x,y,r){
+  let n = 0;
+  for (let i=ebullets.length-1;i>=0;i--){
+    const b = ebullets[i];
+    if (!b.refl) continue;                       /* only attacks marked reflectable */
+    if (dist2(b.x,b.y,x,y) > r*r) continue;
+    const sp = Math.hypot(b.vx,b.vy);
+    const a = Math.atan2(y-b.y, x-b.x);          /* straight back at what deflected it */
+    swapDel(ebullets,i);
+    shoot(b.x, b.y, a, Math.min(520, sp*1.15), 4, 0);
+    spark(b.x,b.y,PAL.bolt); n++;
+  }
+  if (n){ Sound.tick(9); haptic(8); }
+  return n;
+}
+/* Must-kill summons: adds tagged by a boss, counted so coreGuard can gate on them. */
+function bossAdds(){
+  let n = 0;
+  for (const e of enemies) if (e.summon) n++;
+  return n;
+}
+function summon(b,type,x,y,opts){
+  const e = spawnEnemy(type, x, y, opts||{});
+  e.summon = true; e.prio = true;                /* it gets the priority bracket for free */
+  return e;
+}
+function drawArena(){
+  if (!arena) return;
+  ctx.save();
+  ctx.strokeStyle = rgba(PAL.elaser, .30 + Math.sin(elapsed*4)*.06);
+  ctx.lineWidth = 3; ctx.setLineDash([14,10]);
+  ctx.strokeRect(arena.x0, arena.y0, arena.x1-arena.x0, arena.y1-arena.y0);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+function drawBossDark(){
+  if (bossDark <= 0) return;
+  const lit = (170 - bossDark*95);
+  const g = ctx.createRadialGradient(P.x,P.y,lit*.42,P.x,P.y,lit*2.4);
+  g.addColorStop(0,'rgba(2,7,14,0)');
+  g.addColorStop(.55,'rgba(2,7,14,'+(.70*bossDark).toFixed(3)+')');
+  g.addColorStop(1,'rgba(2,7,14,'+(.92*bossDark).toFixed(3)+')');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+function drawPullField(){
+  if (!pullField || !boss || boss.dying) return;
+  const t = boss.t, str = clamp(pullField/50, 0, 1);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i=0;i<12;i++){
+    const a = i/12*TAU - t*.35;
+    const r0 = 210 - (t*70 % 70), r1 = r0 - 44;
+    ctx.strokeStyle = rgba(PAL.boss, .05 + str*.10);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(boss.x+Math.cos(a)*r0, boss.y+Math.sin(a)*r0);
+    ctx.lineTo(boss.x+Math.cos(a)*r1, boss.y+Math.sin(a)*r1);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = rgba(PAL.boss, .07 + str*.10);
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(boss.x, boss.y, 118 + Math.sin(t*1.3)*10, 0, TAU); ctx.stroke();
+  ctx.restore();
+}
 function drawBoss(){
   const b = boss, d = b.def;
   /* drawExtra paints in untranslated screen space and toggles its own composite op, so it is
