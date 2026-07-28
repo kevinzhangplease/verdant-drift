@@ -118,8 +118,8 @@ where a player colour had leaked into enemy art; that must not regress.)
 | S0 determinism | shipped `e11bf77` — root cause found and fixed; see below |
 | S4b spreads & hazards | shipped `36c81bd` — 12 picnic sectors, 10 hazards, hard cool band |
 | S5 enemies | shipped `33e7dbc` — all 19 types as food, cool-band roster |
-| S6 | **next** — 24 bosses as food, four batches of six |
-| S7 | audio: sound bank split and the 12-sector picnic score |
+| S6 bosses | shipped `23e9772`, `9ef46b8` — all 24 as food |
+| S7 | **next** — audio: sound bank split and the 12-sector picnic score |
 
 ### S0 — the determinism hunt (resolved)
 
@@ -241,11 +241,26 @@ sings in rings) · warp → moth · pulsar → blueberry macaron · mote → pop
 
 **Rule for S6:** pick the food to fit the band, never the band to fit the food.
 
-**Bosses** (24, staged) — warden → watermelon with a rind plate · bloom → flower cake · scrapjaw →
-nutcracker · cairn → layer cake whose tiers you knock off · medusa → jellyfish-mould jelly ·
-keeper → jar with six lid clamps · heart → pomegranate · aperture → the picnic basket lid opening.
+**Bosses** *(shipped — all 24)*. warden → blueberry jam jar (its lid is the shield plate) ·
+bloom → flower cake · scrapjaw → nutcracker · gravedigger → blackberry shedding drupelets ·
+forgetwin → salt-and-pepper mills · solaris → a cut fig · sovereign → sugar bowl and cubes ·
+architect → chequered sandwich cake · lantern → punched tin lantern · leviathan → caterpillar ·
+gauntlet → scone / star biscuit / sandwich by form · quietstar → the grand jelly mould ·
+harrow → cake fork · cairn → layer cake whose tiers you knock off · bract → platter of cucumber
+slices · medusa → jellyfish-mould jelly · cantor → sandwich triangles · basilica → cupcakes on a
+stand · loom → lattice pie between two spools · reflection → your own bottle in the enemy band ·
+valve → mangosteen · heart → beetroot · keeper → preserving jar with six clamps · aperture → the
+basket lid opening.
+
 Each keeps its exact hitbox, part count and part positions — food is applied to the existing
 geometry, never the other way round.
+
+**Two traps this stage hit, worth carrying into S7 and beyond.** First: three live readouts
+(medusa's bell, aperture's iris, heart's beat scale) were rewritten from memory instead of read
+from source and came out subtly wrong — always diff a reskinned expression against the original.
+Second: the space boss table leaks player-band keys into enemy draws (`PAL.crystal` ×26,
+`PAL.bolt` ×17). Copying a space draw as the basis for picnic art copies the leak with it; every
+picnic boss has been cleaned, the space table deliberately has not.
 
 **World** — gingham blanket scrolling on `scrollY`, crumbs and ants as the star layers, cutlery
 and paper plates as debris, the ground plane becomes grass. The 12 hazards become spilled drinks,
