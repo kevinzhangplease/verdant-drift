@@ -388,7 +388,10 @@ const Sound = {
   },
   resume(){ if (this.ac && this.ac.state==='suspended') this.ac.resume(); },
   setMuted(m){ this.muted=m; if (this.master) this.master.gain.value = m?0:.9; },
-  setMode(i){ this.mode = i; },
+  /* PALETTES was extended to twelve sectors but MODES never was, so setMode(6..11) left
+     MODES[this.mode] undefined and schedule() threw every 25ms — the whole second campaign
+     has been playing in silence. Wrap until campaign two gets its own six modes. */
+  setMode(i){ this.mode = i % MODES.length; },
   schedule(){
     if (!this.ready) return;
     const M = MODES[this.mode], spb = 60/96/2*M.swing;
@@ -705,9 +708,10 @@ function startLevelAt(i){
   levelIdx = i;
   clearField();
   applyPalette(i);
+  computeTiers();                 /* enemy sophistication is relative to each type's debut */
   Sound.setMode(i);
   debris.length = 0;
-  groundActive = false; groundReveal = 0; scrollGround = 0;
+  groundActive = false; groundReveal = 0; scrollGround = 0; groundHold = 0;
   const L = LEVELS[i];
   hazard = L.hazard ? HAZARDS[L.hazard]() : null;
   step=0; waitTime=0; waitClear=false; elapsed=0; checkpoint=null;
@@ -918,30 +922,31 @@ function drawShocks(){
    ============================================================ */
 const TYPES = {
   /* sector 1 */
-  drifter:{ hp:3,  r:15, score:100, speed:105, draw:dwDrifter },
-  weaver: { hp:4,  r:15, score:150, speed:80,  draw:dwWeaver  },
-  lancer: { hp:3,  r:13, score:180, speed:70,  draw:dwLancer  },
-  turret: { hp:9,  r:20, score:260, speed:60,  draw:dwTurret  },
-  sentry: { hp:16, r:23, score:420, speed:44,  draw:dwSentry  },
+  drifter:{ hp:3,  r:15, score:100, speed:105, home:0, draw:dwDrifter },
+  weaver: { hp:4,  r:15, score:150, speed:80,  home:0, draw:dwWeaver  },
+  lancer: { hp:3,  r:13, score:180, speed:70,  home:0, draw:dwLancer  },
+  turret: { hp:9,  r:20, score:260, speed:60,  home:0, draw:dwTurret  },
+  sentry: { hp:16, r:23, score:420, speed:44,  home:0, draw:dwSentry  },
   /* sector 2 — the boneyard runs on salvage */
-  hauler: { hp:26, r:30, score:600, speed:34,  draw:dwHauler  },
-  scavver:{ hp:5,  r:14, score:220, speed:0,   draw:dwScavver },
+  hauler: { hp:26, r:30, score:600, speed:34,  home:1, draw:dwHauler  },
+  scavver:{ hp:5,  r:14, score:220, speed:0,   home:1, draw:dwScavver },
   /* sector 3 — everything here divides or burns */
-  cinder: { hp:6,  r:18, score:240, speed:70,  draw:dwCinder  },
-  ember:  { hp:2,  r:10, score:90,  speed:120, draw:dwEmber   },
+  cinder: { hp:6,  r:18, score:240, speed:70,  home:2, draw:dwCinder  },
+  ember:  { hp:2,  r:10, score:90,  speed:120, home:2, draw:dwEmber   },
   /* sector 4 — geometry that refuses to be hit honestly */
-  blinker:{ hp:6,  r:15, score:280, speed:0,   draw:dwBlinker },
-  prism:  { hp:12, r:20, score:380, speed:52,  draw:dwPrism   },
+  blinker:{ hp:6,  r:15, score:280, speed:0,   home:3, draw:dwBlinker },
+  prism:  { hp:12, r:20, score:380, speed:52,  home:3, draw:dwPrism   },
   /* sector 5 — things that move together, and things that wait */
-  shoal:  { hp:1,  r:9,  score:60,  speed:0,   draw:dwShoal   },
-  angler: { hp:14, r:22, score:520, speed:40,  draw:dwAngler  }
+  shoal:  { hp:1,  r:9,  score:60,  speed:0,   home:4, draw:dwShoal   },
+  angler: { hp:14, r:22, score:520, speed:40,  home:4, draw:dwAngler  }
 };
 
 function spawnEnemy(type,x,y,opts){
   const t = TYPES[type];
   const hp = t.hp*diff.hp*eliteScale(t.hp);
   const e = Object.assign({
-    type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6), salvo:null,
+    type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6), salvo:null, alive:true,
+    tell:0, tellMax:0, tellKind:0, tellA:0, tellN:0, shieldR:t.shieldR||0, prio:!!t.prio,
     vx:0, vy:t.speed, ang:0, flash:0, phase:rnd(0,TAU), drop:null, state:'in', holdY:H*.2
   }, opts||{});
   enemies.push(e);
@@ -954,8 +959,42 @@ function spawnEnemy(type,x,y,opts){
 function salvo(e,n,gap,fn,ramp){ e.salvo = { n, i:0, t:0, gap, fn, ramp:ramp||1 }; }
 function nearP(e,r){ return dist2(e.x,e.y,P.x,P.y) < r*r; }
 
+/* ---- enemy tells (#21) -------------------------------------------------------
+   Deliberately NOT routed through `warns`. A warn means "a scheduled shot whose payload is a
+   deferred fn", which is right for bosses because nothing else owns the shot. A common enemy
+   already owns its own clock, so putting its tell in `warns` would duplicate that state — and
+   every cap/eviction policy then becomes a way for the copy to disagree with the original.
+   A payload-free tell that lives on the enemy has nothing to evict and cancels for free.
+
+   tellKind is a small int, not a string: this is read per enemy per frame. */
+/* ---- sector ramp (#21) -------------------------------------------------------
+   Sophistication is measured from each type's OWN debut, not from the absolute sector. A raw
+   `levelIdx < 2` test would hand `wisp` its full moveset on sector 7 — the very sector meant to
+   teach it — while `drifter` gets eased in on sector 1. Relative is the only version that works.
+
+   Strictly orthogonal to the other difficulty engines, and it must stay that way:
+     tierOf  → WHICH pattern, how long the tell is, whether a second behaviour exists
+     geoTier → density (curtain layers)
+     rank/gear/RATE → cadence
+     diff/BV → speed and hit points
+   Tier must never multiply bullet count on top of geoTier; that is what keeps sector 12 on
+   Void at high rank from becoming a particle bomb. */
+const TIER = {};
+function computeTiers(){
+  for (const k in TYPES){ const d = levelIdx - (TYPES[k].home||0);
+    TIER[k] = d<=0 ? 0 : d<=2 ? 1 : 2; }
+}
+function tierOf(t){ return TIER[t]||0; }          /* unknown → 0, the safe failure mode */
+function tellDur(T){ return T===0 ? .60 : T===1 ? .48 : .40; }
+
+const TK = { none:0, ring:1, fan:2, line:3, point:4, arc:5, crack:6 };
+function tell(e,kind,dur,a,n){ e.tellKind=kind; e.tellMax=dur; e.tell=dur; e.tellA=a||0; e.tellN=n||0; }
+
 function updateEnemy(e,dt){
   e.t += dt; e.flash = Math.max(0,e.flash-dt*5);
+  /* raw dt, never dt*RATE: rank and gear shorten the gap between shots, never the warning.
+     Sits in the prologue so scavver and shoal — which return early — are covered too. */
+  if (e.tell>0){ e.tell -= dt; if (e.tell<0) e.tell = 0; }
   if (e.salvo){
     const s = e.salvo;
     s.t -= dt*RATE;
@@ -994,7 +1033,10 @@ function updateEnemy(e,dt){
       break;
 
     case 'warp':
-      e.bt -= dt;
+      /* e.bt was never initialised anywhere, so `undefined - dt` was NaN and `NaN <= 0` is
+         false — warps have never blinked or fired since they were written, across sectors 10
+         and 12 where warp is the signature enemy. Lazy-init, as blinker already does. */
+      e.bt = (e.bt===undefined ? rnd(1.0,1.8) : e.bt) - dt;
       if (e.bt<=0){
         e.bt = 1.4;
         burst(e.x,e.y,8,PAL.foe,140);
@@ -1015,7 +1057,8 @@ function updateEnemy(e,dt){
 
     case 'mote': {
       const a = Math.atan2(P.y-e.y,P.x-e.x);
-      e.vx = lerp(e.vx, Math.cos(a)*190, .015); e.vy = lerp(e.vy, Math.sin(a)*190, .015);
+      const km = 1-Math.pow(1-.015, dt*60);          /* was frame-rate dependent */
+      e.vx = lerp(e.vx, Math.cos(a)*190, km); e.vy = lerp(e.vy, Math.sin(a)*190, km);
       e.x += e.vx*dt; e.y += e.vy*dt;
       if (fchance(dt*18)) parts.push({x:e.x,y:e.y,vx:0,vy:-20,life:.3,max:.3,r:2,c:PAL.foe,g:0});
       break;
@@ -1082,14 +1125,15 @@ function updateEnemy(e,dt){
     case 'cinder':
       e.y += e.vy*dt; e.x += Math.sin(e.t*1.1+e.phase)*44*dt; e.ang += dt*1.6;
       e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2,3); ring(e.x,e.y,6,130*BV,e.t); }
+      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2,3); ring(e.x,e.y,6,130*BV,e.ang); }   /* match the sprite */
       break;
 
     case 'ember': {
       /* drawn to you, slowly — a heat-seeking nuisance */
       const a = Math.atan2(P.y-e.y,P.x-e.x);
-      e.vx = lerp(e.vx, Math.cos(a)*130*BV, .02);
-      e.vy = lerp(e.vy, Math.sin(a)*130*BV, .02);
+      const ke = 1-Math.pow(1-.02, dt*60);           /* was frame-rate dependent */
+      e.vx = lerp(e.vx, Math.cos(a)*130*BV, ke);
+      e.vy = lerp(e.vy, Math.sin(a)*130*BV, ke);
       e.x += e.vx*dt; e.y += e.vy*dt;
       if (fchance(dt*24)) parts.push({x:e.x,y:e.y,vx:frnd(-14,14),vy:frnd(-30,-8),life:.4,max:.4,r:2.2,c:PAL.foe,g:0});
       break; }
@@ -1102,7 +1146,8 @@ function updateEnemy(e,dt){
         e.blinkT = rnd(1.3,2.0);
         e.x = rnd(W*.12,W*.88); e.y = rnd(H*.08,H*.42);
         spark(e.x,e.y,PAL.foe);
-        for (let i=-1;i<=1;i+=2) fireAt(e.x,e.y,P.x,P.y,235*BV,{r:5});
+        { const a0 = Math.atan2(P.y-e.y, P.x-e.x);       /* i was unused: both shots flew the same line */
+          for (let i=-1;i<=1;i+=2) fireAng(e.x,e.y, a0 + i*.13, 235*BV, {r:5}); }
       }
       break;
 
@@ -1129,8 +1174,8 @@ function updateEnemy(e,dt){
     case 'angler': {
       if (e.y<e.holdY) e.y += e.vy*dt;
       e.x += Math.sin(e.t*.4+e.phase)*40*dt;
-      e.lure = .5 + Math.sin(e.t*2)*.5;
-      const near = dist2(e.x,e.y,P.x,P.y) < 240*240;
+      e.lure = .5 + Math.sin(e.t*(e.woke?7:2))*.5;   /* the lure races once it has seen you */
+      const near = nearP(e,240);
       e.woke = e.woke || near;
       if (e.woke){
         e.fireT -= dt*RATE;
@@ -1219,9 +1264,17 @@ function lance(x,y,a,warn,live){ lasers.push({ x,y,a, warn, live, w:0 }); Sound.
        so a warning can't be misread as a projectile.
      · `cancel` voids the tell if its owner dies, so killing a shooter mid-wind-up stops
        the shot — the reward for engaging with the threat rather than dodging it. */
-const WARN_MAX = 12;
+const WARN_MAX = 48;
 function telegraph(kind,x,y,a,dur,o){
-  if (warns.length >= WARN_MAX){ const w = warns.shift(); if (w.fn) w.fn(); }
+  if (warns.length >= WARN_MAX){
+    /* Firing a scheduled shot early is a fairness bug; dropping a decorative outline is not.
+       So evict a payload-free warn if one exists, and only fall back to evict-and-fire when
+       every entry owns a shot. In practice that makes premature fire unreachable. */
+    let idx = -1;
+    for (let i=0;i<warns.length;i++) if (!warns[i].fn){ idx = i; break; }
+    if (idx >= 0) swapDel(warns, idx);
+    else { const w = warns.shift(); if (w.fn) w.fn(); }
+  }
   warns.push({ kind, x, y, a, t:0, dur:dur||.5, r:(o&&o.r)||34, n:(o&&o.n)||0,
                fn:(o&&o.fn)||null, src:(o&&o.src)||null,
                follow:!!(o&&o.follow), cancel:!!(o&&o.cancel) });
@@ -1269,6 +1322,7 @@ function damageEnemy(e,dmg,silent){
   return false;
 }
 function killEnemy(e,silent){
+  e.alive = false;                     /* so a tell owned by this enemy cancels rather than fires */
   const i = enemies.indexOf(e);
   if (i>=0) enemies.splice(i,1);
   const T = TYPES[e.type];
@@ -1304,14 +1358,14 @@ const GROUND = {
   pylon:  { hp:22, r:24, score:640, shieldR:150 }   /* shields air enemies within range */
 };
 const GSCROLL = 72, GS_AHEAD = 120;
-let groundActive = false, groundReveal = 0, scrollGround = 0;   /* the visible ground surface */
+let groundActive = false, groundReveal = 0, scrollGround = 0, groundHold = 0;   /* the visible ground surface */
 const STEEL = [150,175,195], GRID = [110,150,175];
 function spawnGround(type,x,opts){
   const t = GROUND[type];
   const g = Object.assign({ type, x:clamp(x,30,W-30), y:-50, r:t.r, hp:t.hp*diff.hp, maxhp:t.hp*diff.hp,
                             fireT:rnd(1.2,2.8), t:0, flash:0 }, opts||{});
   ground.push(g);
-  groundActive = true;
+  groundActive = true; groundHold = 6;     /* a hold so the floor doesn't blink between ground waves */
   teach('ground','A <b>surface passes below</b> — those are ground targets. Your cool <b>strike reticle</b> auto-hits them; line it up by moving.');
   return g;
 }
@@ -1354,6 +1408,10 @@ function groundStrike(x,y,dmg){
 /* a scrolling structural grid so the second layer reads as a real floor with the
    installations locked to it (matched to GSCROLL) — fades in when ground appears */
 function drawGroundPlane(dt){
+  /* was set true on the first spawn and only ever reset by resetRun, so the floor grid never
+     faded back out for the rest of the run */
+  if (groundHold>0) groundHold -= dt;
+  groundActive = ground.length>0 || groundHold>0;
   groundReveal = lerp(groundReveal, groundActive?1:0, 1-Math.pow(1-.05, dt*60));
   if (groundReveal < .01) return;
   const a = groundReveal, cell = 72;
@@ -2154,12 +2212,12 @@ PALETTES.push(
 
 /* --- six new species --- */
 Object.assign(TYPES, {
-  wisp:     { hp:7,  r:16, score:300, speed:62,  draw:dwWisp      },
-  polyp:    { hp:22, r:26, score:640, speed:40,  draw:dwPolyp     },
-  chorister:{ hp:11, r:20, score:420, speed:48,  draw:dwChorister },
-  warp:     { hp:9,  r:16, score:380, speed:0,   draw:dwWarp      },
-  pulsar:   { hp:15, r:22, score:520, speed:36,  draw:dwPulsar    },
-  mote:     { hp:2,  r:9,  score:110, speed:150, draw:dwMote      }
+  wisp:     { hp:7,  r:16, score:300, speed:62,  home:6, draw:dwWisp      },
+  polyp:    { hp:22, r:26, score:640, speed:40,  home:7, draw:dwPolyp     },
+  chorister:{ hp:11, r:20, score:420, speed:48,  home:8, draw:dwChorister },
+  warp:     { hp:9,  r:16, score:380, speed:0,   home:9, draw:dwWarp      },
+  pulsar:   { hp:15, r:22, score:520, speed:36,  home:10, draw:dwPulsar    },
+  mote:     { hp:2,  r:9,  score:110, speed:150, home:7, draw:dwMote      }
 });
 function dwWisp(e){
   ctx.rotate(e.t*.7);
@@ -2190,7 +2248,7 @@ function dwChorister(e){
   ctx.fillStyle=rgba(PAL.foeDark,.95); ctx.fill();
   ctx.strokeStyle=e.flash>0?'#fff':rgba(PAL.foe,.9); ctx.lineWidth=1.8; ctx.stroke();
   const w = 1+Math.sin(e.t*4)*.5;
-  ctx.strokeStyle=rgba(PAL.crystal,.35); ctx.lineWidth=1.4;
+  ctx.strokeStyle=rgba(PAL.elaser,.35); ctx.lineWidth=1.4;
   for (let i=1;i<=2;i++){ ctx.beginPath(); ctx.arc(0,0,18+i*8*w,0,TAU); ctx.stroke(); }
   addGlow(e.x,e.y,28,PAL.foe,.5+e.flash*.4);
 }
@@ -2215,7 +2273,7 @@ function dwPulsar(e){
 function dwMote(e){
   ctx.rotate(e.t*5);
   shellPath(3,9); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
-  ctx.strokeStyle=e.flash>0?'#fff':rgba(PAL.crystal,.9); ctx.lineWidth=1.2; ctx.stroke();
+  ctx.strokeStyle=e.flash>0?'#fff':rgba(PAL.foe,.9); ctx.lineWidth=1.2; ctx.stroke();
   addGlow(e.x,e.y,16,PAL.elaser,.6+e.flash*.3);
 }
 
@@ -2395,7 +2453,10 @@ const HAZARDS = {
    ============================================================ */
 function row(type,n,opts){
   const pad = W/(n+1), jit = rnd(-18,18);
-  for (let i=0;i<n;i++){ const e=spawnEnemy(type, pad*(i+1)+jit, -40-i*rnd(10,40), opts); e.phase=i*.7; }
+  /* stagger fireT as well as phase: without this a row of five fires five volleys inside one
+     second, which reads as a wall rather than a rhythm. Net easier, and every sector benefits. */
+  for (let i=0;i<n;i++){ const e=spawnEnemy(type, pad*(i+1)+jit, -40-i*rnd(10,40), opts);
+    e.phase=i*.7; e.fireT += i*rnd(.18,.34); }
 }
 function vee(type,n,opts){
   const cx = rnd(W*.3,W*.7);
@@ -3294,7 +3355,7 @@ function loadCheckpoint(){
   const c = checkpoint;
   levelIdx = c.level;
   clearField(); showBoss(false);
-  applyPalette(levelIdx); Sound.setMode(levelIdx);
+  applyPalette(levelIdx); computeTiers(); Sound.setMode(levelIdx);
   hazard = LEVELS[levelIdx].hazard ? HAZARDS[LEVELS[levelIdx].hazard]() : null;
   step = c.step; waitTime = 1.2; waitClear = false;
   score = c.score; cores = c.cores;
@@ -3484,7 +3545,9 @@ function update(dt){
 
   if (chain>0){ chainTimer -= dt; if (chainTimer<=0){ chain=0; recalcMult(); refreshHUD(); } }
 
-  for (let i=enemies.length-1;i>=0;i--) if (!updateEnemy(enemies[i],dt)) enemies.splice(i,1);
+  /* the off-screen despawn is not a death, but a tell owned by a gone enemy must still cancel */
+  for (let i=enemies.length-1;i>=0;i--)
+    if (!updateEnemy(enemies[i],dt)){ enemies[i].alive = false; enemies.splice(i,1); }
   if (boss) updateBoss(dt);
 
   /* player bullets */
@@ -3791,6 +3854,68 @@ function drawTitleShip(){
 /* --- enemy art --- */
 function drawEnemies(){
   for (const e of enemies){ ctx.save(); ctx.translate(e.x,e.y); TYPES[e.type].draw(e); ctx.restore(); }
+  drawTells();
+}
+/* A second pass rather than a call inside each of the 19 draw fns: a tell occluded by a
+   later-drawn sprite is worse than no tell, and one pass batches the whole thing into a single
+   state block. Like drawWarns, low quality drops the dash and the glow, never the tell. */
+function drawTells(){
+  const lo = qLevel < 1;
+  let open = false;
+  for (const e of enemies){
+    if (!e.tellKind && !e.prio) continue;
+    if (!open){ ctx.save(); ctx.lineWidth = 2; open = true; }
+
+    if (e.tellKind){
+      const k = 1 - clamp(e.tell/(e.tellMax||1),0,1);          /* 0 at start → 1 at fire */
+      const a = .22 + k*.5 + Math.sin(e.t*30)*.07;
+      ctx.strokeStyle = rgba(PAL.elaser, lo ? a+.15 : a);
+      ctx.lineWidth = 1.6 + k*1.6;
+      if (!lo) ctx.setLineDash([8 - k*4, 7 - k*3]);
+      ctx.beginPath();
+      if (e.tellKind===TK.ring){
+        ctx.arc(e.x, e.y, (e.tellN||e.r*2.4)*(1.5-k*.5), 0, TAU);
+      } else if (e.tellKind===TK.arc){
+        ctx.arc(e.x, e.y, e.r*2.2, e.tellA-(e.tellN||.5)/2, e.tellA+(e.tellN||.5)/2);
+      } else if (e.tellKind===TK.fan){
+        const half=(e.tellN||.5)/2, len=e.r*(3+k*2);
+        for (let i=-1;i<=1;i+=2){ const ang=e.tellA+half*i;
+          ctx.moveTo(e.x,e.y); ctx.lineTo(e.x+Math.cos(ang)*len, e.y+Math.sin(ang)*len); }
+      } else if (e.tellKind===TK.line){
+        const len=Math.max(W,H)*1.2;
+        ctx.moveTo(e.x,e.y); ctx.lineTo(e.x+Math.cos(e.tellA)*len, e.y+Math.sin(e.tellA)*len);
+      } else if (e.tellKind===TK.point){
+        const r=e.r*(2.4-k*1.6);
+        ctx.moveTo(e.x-r,e.y); ctx.lineTo(e.x+r,e.y);
+        ctx.moveTo(e.x,e.y-r); ctx.lineTo(e.x,e.y+r);
+      } else if (e.tellKind===TK.crack){
+        const r=e.r*.85;
+        for (let i=0;i<3;i++){ const ang=e.t*.6+i*TAU/3;
+          ctx.moveTo(e.x+Math.cos(ang)*r*.3, e.y+Math.sin(ang)*r*.3);
+          ctx.lineTo(e.x+Math.cos(ang+.5)*r, e.y+Math.sin(ang+.5)*r); }
+      }
+      ctx.stroke();
+      if (!lo && qLevel>=2 && k>.6) addGlow(e.x,e.y,e.r*2.2,PAL.elaser,(k-.6)*.9);
+    }
+
+    /* priority bracket — corner ticks, the one shape nothing else in the game uses:
+       rings are tells, dots are pickups, dashes are warns, arcs are shields. */
+    if (e.prio){
+      if (!lo) ctx.setLineDash([]);
+      ctx.strokeStyle = rgba(PAL.elaser, .5);
+      ctx.lineWidth = 2;
+      const R = e.r+10, c = Math.cos(e.t*.7), sn = Math.sin(e.t*.7), t = R*.42;
+      ctx.beginPath();
+      for (let i=0;i<4;i++){
+        const dx=(i&1?1:-1), dy=(i&2?1:-1);
+        const px=e.x+(dx*R*c - dy*R*sn), py=e.y+(dx*R*sn + dy*R*c);
+        ctx.moveTo(px - dx*t*c, py - dx*t*sn); ctx.lineTo(px, py);
+        ctx.lineTo(px + dy*t*sn, py - dy*t*c);
+      }
+      ctx.stroke();
+    }
+  }
+  if (open){ ctx.setLineDash([]); ctx.restore(); }
 }
 function dwDrifter(e){
   ctx.rotate(Math.sin(e.t*1.2)*.2);
@@ -3812,8 +3937,8 @@ function dwLancer(e){
   ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(7,10); ctx.lineTo(0,5); ctx.lineTo(-7,10); ctx.closePath();
   ctx.fillStyle = e.state==='aim'&&Math.floor(e.t*12)%2 ? rgba(PAL.ebullet,.8) : rgba(PAL.foeDark,.95);
   ctx.fill();
-  ctx.strokeStyle=foeShade(e)||rgba(PAL.crystal,.9); ctx.lineWidth=1.4; ctx.stroke();
-  addGlow(e.x,e.y,18,e.state==='dive'?PAL.crystal:PAL.foe,.5+e.flash*.5);
+  ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.9); ctx.lineWidth=1.4; ctx.stroke();
+  addGlow(e.x,e.y,18,e.state==='dive'?PAL.elaser:PAL.foe,.5+e.flash*.5);
 }
 function dwTurret(e){
   ctx.rotate(Math.sin(e.t*.7)*.25);
@@ -3833,7 +3958,7 @@ function dwSentry(e){
     ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.8); ctx.stroke(); }
   ctx.restore();
   shellPath(5,16); ctx.fillStyle=rgba(PAL.foeDark,.96); ctx.fill();
-  ctx.strokeStyle=foeShade(e)||rgba(PAL.crystal,.8); ctx.lineWidth=1.8; ctx.stroke();
+  ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.8); ctx.lineWidth=1.8; ctx.stroke();
   ctx.beginPath(); ctx.arc(0,0,7+Math.sin(e.t*4)*1.5,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.85); ctx.fill();
   addGlow(e.x,e.y,34,PAL.foe,.5+e.flash*.5);
 }
@@ -3867,14 +3992,14 @@ function dwCinder(e){
   ctx.closePath();
   ctx.fillStyle=rgba(PAL.foeDark,.96); ctx.fill();
   ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.9); ctx.lineWidth=1.8; ctx.stroke();
-  ctx.beginPath(); ctx.arc(0,0,6+Math.sin(e.t*6)*1.5,0,TAU); ctx.fillStyle=rgba(PAL.crystal,.9); ctx.fill();
+  ctx.beginPath(); ctx.arc(0,0,6+Math.sin(e.t*6)*1.5,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
   addGlow(e.x,e.y,26,PAL.foe,.5+e.flash*.5);
 }
 function dwEmber(e){
   const p = .6+Math.sin(e.t*9)*.4;
   ctx.beginPath(); ctx.arc(0,0,7,0,TAU);
   ctx.fillStyle=foeShade(e)||rgba(PAL.ebullet,.9); ctx.fill();
-  ctx.strokeStyle=rgba(PAL.crystal,.7); ctx.lineWidth=1.4;
+  ctx.strokeStyle=rgba(PAL.elaser,.7); ctx.lineWidth=1.4;
   ctx.beginPath(); ctx.arc(0,0,10+p*2,0,TAU); ctx.stroke();
   addGlow(e.x,e.y,16,PAL.elaser,.6+p*.3);
 }
@@ -3893,7 +4018,7 @@ function dwPrism(e){
   shellPath(3,19); ctx.fillStyle=rgba(PAL.foeDark,.96); ctx.fill();
   ctx.strokeStyle=foeShade(e)||rgba(PAL.foe,.9); ctx.lineWidth=2; ctx.stroke();
   const sa = e.sa===undefined?Math.PI/2:e.sa;
-  ctx.strokeStyle=rgba(PAL.crystal,.75); ctx.lineWidth=4;
+  ctx.strokeStyle=rgba(PAL.elaser,.75); ctx.lineWidth=4;
   ctx.beginPath(); ctx.arc(0,0,26,sa-.7,sa+.7); ctx.stroke();
   ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
   addGlow(e.x,e.y,28,PAL.foe,.45+e.flash*.5);
@@ -3913,11 +4038,14 @@ function dwAngler(e){
     ctx.beginPath(); ctx.moveTo(Math.cos(a)*14,Math.sin(a)*10);
     ctx.lineTo(Math.cos(a)*24,Math.sin(a)*18); ctx.lineTo(Math.cos(a+.14)*14,Math.sin(a+.14)*10);
     ctx.closePath(); ctx.fill(); }
+  /* the lure was a gold dot with a gold glow on a tether — it read exactly like a pickup you
+     should fly toward. Hot band now, and awake looks nothing like asleep. */
   const l = e.lure===undefined?.5:e.lure;
+  const lc = e.woke ? PAL.elaser : PAL.ebullet;
   ctx.beginPath(); ctx.moveTo(0,-14); ctx.quadraticCurveTo(14,-34,2,-44);
-  ctx.strokeStyle=rgba(PAL.foe,.6); ctx.lineWidth=1.5; ctx.stroke();
-  ctx.beginPath(); ctx.arc(2,-44,4+l*2,0,TAU); ctx.fillStyle=rgba(PAL.crystal,.95); ctx.fill();
-  addGlow(e.x+2,e.y-44,26,PAL.crystal,.5+l*.4);
+  ctx.strokeStyle=rgba(PAL.foe,e.woke?.85:.6); ctx.lineWidth=e.woke?2:1.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(2,-44,(e.woke?5:3.4)+l*(e.woke?3:1.4),0,TAU); ctx.fillStyle=rgba(lc,.95); ctx.fill();
+  addGlow(e.x+2,e.y-44,e.woke?32:20,lc,(e.woke?.7:.35)+l*.4);
   addGlow(e.x,e.y,26,PAL.foe,.25+e.flash*.5);
 }
 
@@ -3970,13 +4098,17 @@ function drawBoss(){
 /* Warnings read as intent, never as ordnance: dashed, translucent, hot-band, and drawn
    under live fire. The dash tightens and the shape closes as the moment arrives. */
 function drawWarns(){
-  if (qLevel<1 || !warns.length) return;
+  if (!warns.length) return;
+  /* A warning must never be invisible while its shot still fires — so low quality degrades the
+     STYLE, not the existence. setLineDash is the expensive part here, which means the cheap
+     path is also the more legible one: legibility rises as quality falls. */
+  const lo = qLevel < 1;
   ctx.save();
   for (const w of warns){
     const k = clamp(w.t/w.dur,0,1), pulse = .18 + k*.34 + Math.sin(w.t*34)*.08;
-    ctx.strokeStyle = rgba(PAL.elaser, pulse);
+    ctx.strokeStyle = rgba(PAL.elaser, lo ? pulse+.15 : pulse);
     ctx.lineWidth = 1.5 + k*1.5;
-    ctx.setLineDash([9 - k*5, 8 - k*4]);
+    if (!lo) ctx.setLineDash([9 - k*5, 8 - k*4]);
     ctx.beginPath();
     if (w.kind==='ring'){
       ctx.arc(w.x, w.y, w.r*(1.55-k*.55), 0, TAU);
