@@ -372,9 +372,10 @@ const SKIN = {
     pal:{
       hull:[255,244,232], bolt:[240,78,66], missile:[255,214,92], drone:[255,190,84],
       crystal:[255,158,196], pickup:[255,236,150],
-      neb:[[196,150,120],[168,196,150],[210,180,140]], star:[255,250,238], foe:[126,196,214],
-      foeDark:[58,92,116], ebullet:[104,178,222], elaser:[140,206,236], boss:[92,158,196],
-      dust:.7, flash:[255,255,255], void:[86,132,96]
+      /* lighter and warmer than the first pass, which read as swamp rather than blanket */
+      neb:[[236,206,178],[210,226,192],[244,224,198]], star:[255,252,244], foe:[108,182,206],
+      foeDark:[52,86,112], ebullet:[86,166,216], elaser:[128,200,234], boss:[74,146,190],
+      dust:.42, flash:[255,255,255], void:[142,178,126]
     }
   }
 };
@@ -401,9 +402,134 @@ function flashFill(a){ const c=PAL.flash; return 'rgba('+c[0]+','+c[1]+','+c[2]+
 const SKIN_CSS = {
   space:  { void:'#04070f', ink:'#e8f6f2', dim:'#7c9a97',
             jade:'#6ffbc0', rose:'#ff5aa8', amber:'#ffc978' },
-  picnic: { void:'#3f6b4a', ink:'#fff6ea', dim:'#cbb79c',
+  picnic: { void:'#8eb27e', ink:'#3d2b1f', dim:'#6b5442',
             jade:'#ff8f6b', rose:'#7ec4d6', amber:'#ffd45c' }
 };
+/* ---- the art layer (#22) ------------------------------------------------------
+   Skins swap SHAPES, not just colours — a ketchup bottle is not a recoloured arrow. ART holds
+   per-skin overrides; anything a skin hasn't drawn yet falls back to the space art, which is
+   what lets the food land in batches while the game stays playable throughout. */
+const ART = { space:{}, picnic:{} };
+function art(kind,key){
+  const a = ART[skinKey] && ART[skinKey][kind];
+  if (!a) return null;
+  return key===undefined ? a : (a[key] || null);   /* 'ship' is a fn; 'enemy' is a table */
+}
+function artFn(kind,key,fallback){ return art(kind,key) || fallback; }
+
+/* Semi-3D on a 2D canvas: one light from the top-left, a soft drop shadow, a body gradient
+   and a rim gloss. Doing that per entity per frame would not hold 60fps on mobile — 30+
+   entities each building gradients every frame is exactly the cost the quality scaler exists
+   to shed — so a picnic entity is rendered ONCE into an offscreen canvas and blitted after. */
+const spriteCache = new Map();
+function sprite(key, w, h, paint){
+  const ck = skinKey+':'+key+':'+w+'x'+h+':'+qLevel;
+  let c = spriteCache.get(ck);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = Math.ceil(w*DPR); c.height = Math.ceil(h*DPR);
+  const g = c.getContext('2d');
+  g.setTransform(DPR,0,0,DPR,0,0);
+  g.translate(w/2, h/2);
+  paint(g, w, h);
+  spriteCache.set(ck, c);
+  return c;
+}
+function blitSprite(c, x, y, w, h, rot){
+  /* force source-over: several draw paths set 'lighter' for their own glow effects, and an
+     additively-blended sprite blows straight out to white */
+  ctx.save(); ctx.globalCompositeOperation='source-over';
+  ctx.translate(x,y); if (rot) ctx.rotate(rot);
+  ctx.drawImage(c, -w/2, -h/2, w, h);
+  ctx.restore();
+}
+/* the shared look, so 65 draw functions agree instead of each inventing a style */
+function softShadow(g, r){
+  if (qLevel < 1) return;                       /* first thing to go on a weak device */
+  g.save();
+  g.fillStyle = 'rgba(40,30,20,.22)';
+  g.beginPath(); g.ellipse(r*.16, r*.30, r*.92, r*.42, 0, 0, TAU); g.fill();
+  g.restore();
+}
+function roundBody(g, r, col, dark){
+  const grd = g.createRadialGradient(-r*.34,-r*.40,r*.10, 0,0,r*1.12);
+  grd.addColorStop(0, rgba(col,1));
+  grd.addColorStop(.62, rgba(col,1));
+  grd.addColorStop(1, rgba(dark||col,1));
+  g.fillStyle = grd;
+}
+function gloss(g, r, a){
+  if (qLevel < 2) return;                       /* the rim highlight is the cheapest thing to drop */
+  g.save(); g.globalCompositeOperation='lighter';
+  const grd = g.createRadialGradient(-r*.38,-r*.46,0, -r*.38,-r*.46, r*.72);
+  grd.addColorStop(0,'rgba(255,255,255,'+(a||.5)+')'); grd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=grd; g.beginPath(); g.ellipse(-r*.30,-r*.38,r*.56,r*.40,-.5,0,TAU); g.fill();
+  g.restore();
+}
+function outline(g, a){ g.strokeStyle='rgba(74,52,38,'+(a||.55)+')'; g.lineWidth=2; g.stroke(); }
+
+/* ---- picnic: the player ------------------------------------------------------ */
+ART.picnic.ship = function(){
+  const blink = P.inv>0 && Math.floor(P.inv*14)%2===0;
+  if (!blink){
+    /* the bottle squeezes as it fires: fireT counts down to the next shot, so it is nearly
+       zero at the moment of the squeeze */
+    const sq = clamp(1 - P.fireT/0.12, 0, 1);
+    const w = 34*(1+sq*.10), h = 52*(1-sq*.07);
+    const c = sprite('ketchup', 46, 62, (g)=>{
+      softShadow(g, 20);
+      /* cap */
+      g.beginPath(); g.roundRect(-7,-30,14,9,3); g.fillStyle=rgba(PAL.crystal,1); g.fill(); outline(g,.45);
+      /* neck */
+      g.beginPath(); g.moveTo(-6,-22); g.lineTo(6,-22); g.lineTo(8,-13); g.lineTo(-8,-13); g.closePath();
+      g.fillStyle=rgba(PAL.hull,1); g.fill(); outline(g,.35);
+      /* body */
+      g.beginPath(); g.moveTo(-13,-13); g.quadraticCurveTo(-17,-4,-16,12);
+      g.quadraticCurveTo(-15,25,0,25); g.quadraticCurveTo(15,25,16,12);
+      g.quadraticCurveTo(17,-4,13,-13); g.closePath();
+      roundBody(g, 18, PAL.hull, [214,196,178]); g.fill(); outline(g,.5);
+      /* label */
+      g.beginPath(); g.roundRect(-11,-2,22,15,4); g.fillStyle=rgba(PAL.bolt,1); g.fill();
+      g.beginPath(); g.roundRect(-7,2,14,3,1.5); g.fillStyle='rgba(255,255,255,.75)'; g.fill();
+      gloss(g, 18, .55);
+    });
+    blitSprite(c, P.x, P.y, w*1.35, h*1.19, P.tilt*.35);
+    addGlow(P.x, P.y-6, 16, PAL.bolt, .2);
+  }
+};
+/* ketchup blobs: round, wobbling, with a highlight — never the cool bolt of the space skin */
+ART.picnic.pbullet = function(b){
+  const r = b.r*1.9;
+  const c = sprite(b.homing?'mayo':'blob', 18, 18, (g)=>{
+    const col = b.homing ? PAL.missile : PAL.bolt;
+    g.beginPath(); g.ellipse(0,0,6.6,6.0,0,0,TAU);
+    roundBody(g, 7, col, b.homing?[214,168,60]:[186,44,36]); g.fill();
+    gloss(g, 7, .7);
+  });
+  blitSprite(c, b.x, b.y, r*1.5, r*1.5, b.t*3);
+  addGlow(b.x, b.y, r*1.1, b.homing?PAL.missile:PAL.bolt, .22);
+};
+ART.picnic.drone = function(d){
+  const c = sprite('mustard', 22, 22, (g)=>{
+    softShadow(g, 8);
+    g.beginPath(); g.ellipse(0,0,8,7,0,0,TAU);
+    roundBody(g, 8, PAL.drone, [206,150,40]); g.fill(); outline(g,.4);
+    gloss(g, 8, .6);
+  });
+  blitSprite(c, d.x, d.y, 20, 20, d.drawA+Math.PI/2);
+  addGlow(d.x,d.y,11,PAL.drone,.22);
+};
+/* sprinkles, not crystals */
+ART.picnic.crystal = function(p,pulse){
+  const c = sprite('sprinkle', 16, 16, (g)=>{
+    g.beginPath(); g.roundRect(-5,-2,10,4,2);
+    g.fillStyle=rgba(PAL.crystal,1); g.fill(); outline(g,.35);
+    gloss(g, 5, .5);
+  });
+  blitSprite(c, p.x, p.y, 13*pulse, 13*pulse, p.t*2.6);
+  addGlow(p.x,p.y,9,PAL.crystal,.3);
+};
+
 function applySkin(key){
   if (!SKIN[key]) key = 'space';
   skinKey = key;
@@ -411,6 +537,7 @@ function applySkin(key){
   applyPalette(typeof levelIdx==='number' ? levelIdx : 0);   /* re-layer the sector variant */
   const css = SKIN_CSS[key], root = document.documentElement;
   for (const k in css) root.style.setProperty('--'+k, css[k]);
+  spriteCache.clear();            /* shading is baked per skin, so it must not survive a swap */
   /* applyPalette above already rebuilt the nebula and starfield, and nothing else here
      is baked at boot — so this is safe to call mid-fight */
 }
@@ -4191,6 +4318,8 @@ function shipPath(c){
   c.closePath();
 }
 function drawShip(){
+  const skinShip = art('ship');
+  if (skinShip){ skinShip(); drawShipAura(); return; }
   const blink = P.inv>0 && Math.floor(P.inv*14)%2===0;
   ctx.save(); ctx.translate(P.x,P.y); ctx.rotate(P.tilt*.35);
   if (!blink){
@@ -4208,6 +4337,10 @@ function drawShip(){
     addGlow(P.x,P.y+16,26,PAL.bolt,.7); addGlow(P.x,P.y-6,20,PAL.hull,.5);
   }
   ctx.restore();
+  drawShipAura();
+}
+function drawShipAura(){
+  const blink = P.inv>0 && Math.floor(P.inv*14)%2===0;   /* was scoped to drawShip before the split */
   if (P.shield>0){
     const pulse = 1+Math.sin(elapsed*4)*.03;
     ctx.save(); ctx.globalCompositeOperation='lighter';
@@ -4238,7 +4371,9 @@ function drawShip(){
     ctx.fillStyle=rgba(PAL.crystal,.3); ctx.beginPath(); ctx.arc(P.x,P.y,P.r*.8,0,TAU); ctx.fill();
     ctx.restore();
   }
+  const skinD = art('drone');
   for (const d of drones){
+    if (skinD){ skinD(d); continue; }
     const dx=d.x, dy=d.y, ang=(d.drawA===undefined?-Math.PI/2:d.drawA);
     ctx.save(); ctx.translate(dx,dy); ctx.rotate(ang);
     ctx.fillStyle=rgba(PAL.drone,.9);
@@ -4642,7 +4777,9 @@ function drawLasers(){
 }
 function drawPlayerBullets(){
   ctx.globalCompositeOperation='lighter';
+  const skinB = art('pbullet');
   for (const b of pbullets){
+    if (skinB){ skinB(b); continue; }
     if (b.homing){
       ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(Math.atan2(b.vy,b.vx));
       ctx.fillStyle=rgba(PAL.missile,.95);
@@ -4692,6 +4829,8 @@ function drawPickups(){
       ctx.fillText(p.mod?MODNAME[p.mod][0]:'!',0,.5);
       ctx.restore(); addGlow(p.x,p.y,30,PAL.missile,.6+pl*.2);
     } else if (p.kind==='crystal'){
+      const sc = art('crystal');
+      if (sc){ sc(p,1); continue; }
       ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.t*2.4);
       ctx.fillStyle=rgba(PAL.crystal,.95);
       ctx.beginPath(); ctx.moveTo(0,-7); ctx.lineTo(4.5,0); ctx.lineTo(0,7); ctx.lineTo(-4.5,0); ctx.closePath(); ctx.fill();
