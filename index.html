@@ -1737,6 +1737,7 @@ function updateBoss(dt){
     if (b.timers[k] === undefined) b.timers[k] = at.first!==undefined ? at.first : at.every;
     b.timers[k] -= dt*RATE;
     if (b.timers[k] <= 0){
+      if (at.gate && !at.gate(b)) continue;   /* holds the timer until the condition lands */
       b.timers[k] = typeof at.every==='function' ? at.every(b) : at.every;
       /* an attack with a `warn` announces itself first: the payload is deferred into the
          telegraph, which ticks on raw dt so rank and gear can shorten the gap between
@@ -1753,6 +1754,12 @@ function updateBoss(dt){
 function damageBoss(dmg,part,ang){
   const b = boss; if (!b || b.dying) return;   /* a corpse takes no more hits */
   if (part && part.alive){
+    /* a part can face-check the hit: armour that only opens from one side */
+    if (b.def.hitArc && ang!==undefined && !b.def.hitArc(b,part,ang)){
+      b.flash = .3;
+      if (Math.random()<.2) floatText(part.x,part.y-12,'SEALED',PAL.ebullet);
+      updateBossBar(); return;
+    }
     part.hp -= dmg; b.flash = .6;
     if (part.hp<=0){
       part.alive = false;
@@ -1931,13 +1938,19 @@ const BOSS = {
 /* ---------- sector 1 ---------- */
 warden:{
   key:'warden', label:'Warden · gate keeper', hp:150, r:46, y:.19, reward:4000,
-  parts:()=>[{ ox:-62, oy:16, hp:45, r:24, kind:'pod' },{ ox:62, oy:16, hp:45, r:24, kind:'pod' }],
+  /* the first boss teaches the shield verb: a thin plate seals the core, and it is deliberately
+     cheap — this is a lesson, not a wall. Sector one must not get harder. */
+  parts:()=>[{ ox:-62, oy:16, hp:45, r:24, kind:'pod' },{ ox:62, oy:16, hp:45, r:24, kind:'pod' },
+             { ox:0, oy:-40, hp:22, r:26, kind:'shield' }],
+  coreGuard:(b)=> b.parts.some(p=>p.alive && p.kind==='shield') ? 1 : 0,
+  onPartDeath:(b,p)=>{ if (p.kind==='shield'){ floatText(b.x,b.y-56,'PLATE DOWN',PAL.bolt);
+      teach('shield','Some hulls are <b>sealed</b>. Break the plate and the core is yours.'); } },
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.55)*(W*.28); },
   attacks:[
-    { k:'pods', every:1.7, needParts:1, fn:(b)=>{ for (const p of b.parts){ if (!p.alive) continue;
+    { k:'pods', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.7, needParts:1, fn:(b)=>{ for (const p of b.parts){ if (!p.alive) continue;
         const base = Math.atan2(P.y-p.y,P.x-p.x);
         for (let i=-1;i<=1;i++) fireAng(p.x,p.y,base+i*.2,230*BV); } } },
-    { k:'ring', every:(b)=>b.parts.some(p=>p.alive)?3.1:1.9, first:3,
+    { k:'ring', warn:'ring', wd:0.55, every:(b)=>b.parts.some(p=>p.alive)?3.1:1.9, first:3,
       fn:(b)=>ring(b.x,b.y, b.parts.some(p=>p.alive)?14:20, 165*BV, rnd(0,TAU)) },
     { k:'spiral', every:.1, needParts:0, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.5;
         fireAng(b.x,b.y,b.vars.s,210*BV); fireAng(b.x,b.y,b.vars.s+Math.PI,210*BV); } }
@@ -1949,7 +1962,15 @@ warden:{
     ctx.strokeStyle = rgba(PAL.boss,.9); ctx.lineWidth=2.4; ctx.stroke();
     ctx.beginPath(); ctx.arc(0,0,16+Math.sin(b.t*3)*2,0,TAU); ctx.fillStyle=rgba(PAL.boss,.9); ctx.fill();
   },
-  drawPart:(b,p)=>{ shellPath(8,22); ctx.fillStyle='rgba(6,24,32,.96)'; ctx.fill();
+  drawPart:(b,p)=>{
+    if (p.kind==='shield'){                       /* an arc across the core, visibly covering it */
+      ctx.beginPath(); ctx.arc(0,34,50,-Math.PI*.86,-Math.PI*.14);
+      ctx.strokeStyle=rgba(PAL.elaser, .5+ (1-p.hp/p.max)*.45); ctx.lineWidth=7; ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,34,50,-Math.PI*.86,-Math.PI*.14);
+      ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=2; ctx.stroke();
+      return;
+    }
+    shellPath(8,22); ctx.fillStyle='rgba(6,24,32,.96)'; ctx.fill();
     ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2; ctx.stroke();
     ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill(); }
 },
@@ -1961,7 +1982,7 @@ bloom:{
   phaseAt:[.5],
   onPartDeath:(b)=>{ if (b.parts.filter(p=>p.alive).length<=2) detachAll(b,'sentry'); },
   attacks:[
-    { k:'petal', every:2.8, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
+    { k:'petal', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.8, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
         fireAt(p.x,p.y,P.x,P.y,215*BV); } },
     { k:'spiral', every:(b)=>b.phase>1?.085:.16, fn:(b)=>{ b.vars.s=(b.vars.s||0)+(b.phase>1?.41:.33);
         const arms = b.phase>1?4:3;
@@ -1989,10 +2010,10 @@ scrapjaw:{
   move:(b)=>{ if (b.vars.slam){ return; } b.tx = W/2 + Math.sin(b.t*.7)*(W*.3); b.ty = H*.18; },
   layout:(b)=>{ for (const p of b.parts){ const sw = Math.sin(b.t*1.6)*26*p.side; p.x=b.x+p.ox+sw; p.y=b.y+p.oy+Math.abs(sw)*.3; } },
   attacks:[
-    { k:'shot', every:2.4, fn:(b)=>shotgun(b.x,b.y+30,P.x,P.y,7,.34,190,330,{r:5}) },
-    { k:'claw', every:1.9, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'shot', warn:'fan', wd:0.55, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.4, fn:(b)=>shotgun(b.x,b.y+30,P.x,P.y,7,.34,190,330,{r:5}) },
+    { k:'claw', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.9, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         for (let i=0;i<5;i++) fireAng(p.x,p.y, Math.PI/2 + p.side*(i-2)*.22, 200*BV); } },
-    { k:'slam', every:6.5, first:5, needParts:0, fn:(b)=>{
+    { k:'slam', warn:'point', wd:0.7, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), every:6.5, first:5, needParts:0, fn:(b)=>{
         b.vars.slam = 1; b.tx = clamp(P.x,60,W-60); b.ty = H*.62;
         lance(b.x,b.y,Math.PI/2,.8,.1);
         setTimeout(()=>{ if (boss===b && !b.dying){ b.ty=H*.18; b.vars.slam=0; shake=24;
@@ -2021,11 +2042,11 @@ gravedigger:{
   onPhase:(b,ph)=>{ if (ph>=2) for (const p of b.parts) if (!p.alive && Math.random()<.7){
       p.alive = true; p.hp = p.max*.6; } },   /* it drags the wreckage back */
   attacks:[
-    { k:'hurl', every:2.6, fn:(b)=>{ const live=b.parts.filter(p=>p.alive);
+    { k:'hurl', warn:'point', wd:0.48, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), every:2.6, fn:(b)=>{ const live=b.parts.filter(p=>p.alive);
         if (!live.length){ shotgun(b.x,b.y,P.x,P.y,9,.4,180,320,{r:6}); return; }
         const p = pick(live); fireAt(p.x,p.y,P.x,P.y,300*BV,{ r:11, big:true }); } },
-    { k:'ring', every:3.2, fn:(b)=>gapRing(b.x,b.y,22,150*BV,rnd(0,TAU), rnd(0,TAU), .45) },
-    { k:'rain', every:2.2, phase:[2,3], fn:(b)=>{ for (let i=0;i<3;i++)
+    { k:'ring', warn:'ring', wd:0.55, every:3.2, fn:(b)=>gapRing(b.x,b.y,22,150*BV,rnd(0,TAU), rnd(0,TAU), .45) },
+    { k:'rain', warn:'line', wd:0.6, every:2.2, phase:[2,3], fn:(b)=>{ for (let i=0;i<3;i++)
         fireAng(rnd(0,W),-20, Math.PI/2+rnd(-.2,.2), rnd(150,240)*BV, {r:7}); } },
     { k:'spiral', every:.09, phase:[3], fn:(b)=>{ b.vars.s=(b.vars.s||0)+.37;
         for (let i=0;i<3;i++) fireAng(b.x,b.y,b.vars.s+i/3*TAU,175*BV); } }
@@ -2058,9 +2079,9 @@ forgetwin:{
         const a = b.parts[0], c = b.parts[1];
         if (!a.alive || !c.alive) return;
         hurtOnSegment(a.x,a.y,c.x,c.y,14-P.r); } },
-    { k:'twinfire', every:1.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'twinfire', warn:'fan', wd:0.55, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         shotgun(p.x,p.y,P.x,P.y,4,.22,200,290,{r:5}); } },
-    { k:'core', every:1.1, needParts:0, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.9;
+    { k:'core', warn:'ring', wd:0.55, every:1.1, needParts:0, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.9;
         gapRing(b.x,b.y,26,180*BV,b.vars.s, b.vars.s+Math.PI, .5); } },
     { k:'ember', every:2.4, fn:(b)=>{ if (enemies.length<12) spawnEnemy('ember', b.x+rnd(-90,90), b.y+30, {}); } }
   ],
@@ -2088,11 +2109,11 @@ solaris:{
   phaseAt:[.66,.33],
   tick:(b)=>{ pullField = 22 + b.phase*16; },
   attacks:[
-    { k:'wave', every:(b)=>b.phase>=3?2.0:2.8, fn:(b)=>{
+    { k:'wave', warn:'ring', wd:0.55, every:(b)=>b.phase>=3?2.0:2.8, fn:(b)=>{
         b.vars.g = rnd(0,TAU);
         gapRing(b.x,b.y, 30+b.phase*6, 145*BV, rnd(0,TAU), b.vars.g, .42); } },
-    { k:'flare', every:1.5, fn:(b)=>shotgun(b.x,b.y,P.x,P.y,5,.26,210,320,{r:6}) },
-    { k:'rain', every:.5, phase:[2,3], fn:()=>fireAng(rnd(0,W),-16,Math.PI/2+rnd(-.15,.15),rnd(170,260)*BV,{r:5}) },
+    { k:'flare', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.5, fn:(b)=>shotgun(b.x,b.y,P.x,P.y,5,.26,210,320,{r:6}) },
+    { k:'rain', warn:'line', wd:0.6, every:.5, phase:[2,3], fn:()=>fireAng(rnd(0,W),-16,Math.PI/2+rnd(-.15,.15),rnd(170,260)*BV,{r:5}) },
     { k:'lance', every:5.5, phase:[3], fn:(b)=>{ lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x),1,1.8);
         lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x)+Math.PI,1,1.8); } },
     { k:'cinder', every:4, phase:[2,3], fn:(b)=>{ if (enemies.length<10) spawnEnemy('cinder', rnd(W*.2,W*.8), -30, {}); } }
@@ -2124,11 +2145,11 @@ sovereign:{
           const a=live[i], c=live[(i+1)%live.length];
           if (hurtOnSegment(a.x,a.y,c.x,c.y,12-P.r)) break;
         } } },
-    { k:'node', every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.7)
+    { k:'node', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.7)
         fireAt(p.x,p.y,P.x,P.y,230*BV,{r:5}); } },
-    { k:'volley', every:1.15, needParts:0, fn:(b)=>{
+    { k:'volley', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.15, needParts:0, fn:(b)=>{
         for (let i=-2;i<=2;i++) fireAt(b.x,b.y,P.x+i*46,P.y,265*BV,{r:5}); } },
-    { k:'grid', every:2.4, needParts:0, fn:(b)=>{ const off=rnd(0,60);
+    { k:'grid', warn:'line', wd:0.6, every:2.4, needParts:0, fn:(b)=>{ const off=rnd(0,60);
         for (let x=off;x<W;x+=60) fireAng(x,-12,Math.PI/2,200*BV,{r:5}); } }
   ],
   draw:(b)=>{ const guarded = b.parts.some(p=>p.alive);
@@ -2160,16 +2181,16 @@ architect:{
   move:(b)=>{ b.tx = lerp(b.tx, clamp(W-P.x,70,W-70), .02); },   /* it mirrors you */
   phaseAt:[.62,.3],
   attacks:[
-    { k:'wall', every:(b)=>b.phase>=3?2.0:2.9, fn:(b)=>{
+    { k:'wall', warn:'line', wd:0.6, every:(b)=>b.phase>=3?2.0:2.9, fn:(b)=>{
         const gap = rnd(W*.16,W*.84), gw = 62;
         for (let x=10;x<W;x+=34){ if (Math.abs(x-gap)<gw) continue;
           fireAng(x,-14,Math.PI/2,150*BV,{r:6,life:9}); } } },
-    { k:'mirror', every:1.5, fn:(b)=>{
+    { k:'mirror', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.5, fn:(b)=>{
         for (let s=-1;s<=1;s+=2){ const x = b.x + s*70;
           for (let i=-1;i<=1;i++) fireAt(x,b.y, P.x+i*40, P.y, 240*BV,{r:5}); } } },
     { k:'sweep', every:5.2, phase:[2,3], fn:(b)=>{
         lance(b.x,b.y,Math.PI/2 - .9, 1.1, 2.2); lance(b.x,b.y,Math.PI/2 + .9, 1.1, 2.2); } },
-    { k:'ghost', every:3.0, phase:[3], fn:(b)=>{
+    { k:'ghost', warn:'ring', wd:0.55, every:3.0, phase:[3], fn:(b)=>{
         for (let s=-1;s<=1;s+=2) gapRing(b.x+s*120, b.y+40, 18, 165*BV, rnd(0,TAU), rnd(0,TAU), .5); } },
     { k:'blink', every:4.4, phase:[2,3], fn:(b)=>{ if (enemies.length<8)
         for (let i=0;i<2;i++) spawnEnemy('blinker', rnd(W*.2,W*.8), -30, { holdY:rnd(H*.1,H*.3) }); } }
@@ -2195,14 +2216,21 @@ lantern:{
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.33)*(W*.3); },
   layout:(b)=>{ const p=b.parts[0]; const sw=Math.sin(b.t*1.1)*40;
     p.x = b.x + sw; p.y = b.y + 74 + Math.cos(b.t*.9)*14; },
-  tick:(b)=>{ const p=b.parts[0]; b.vars.lit = p.alive ? 1 : 0; },
+  /* the banner says "it fishes for you" and the whole point was that the lure IS the light —
+     vars.lit and vars.pulse were written and read nowhere, so the dark attack did nothing at
+     all. Now the arena genuinely darkens while the lure lives: kill the light first. */
+  tick:(b,dt)=>{ const p=b.parts[0];
+    const want = p.alive ? .55 + (b.vars.pulse||0)*.35 : 0;
+    bossDark = lerp(bossDark, want, 1-Math.pow(.06, dt));
+    if (b.vars.pulse) b.vars.pulse = Math.max(0, b.vars.pulse - dt*.5); },
   attacks:[
-    { k:'orbs', every:2.6, fn:(b)=>{ for (let i=-1;i<=1;i++)
+    { k:'orbs', warn:'point', wd:0.48, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), every:2.6, fn:(b)=>{ for (let i=-1;i<=1;i++)
         fireAt(b.x,b.y,P.x+i*60,P.y,120*BV,{r:9,big:true}); } },
     { k:'shoal', every:5.0, first:3, fn:(b)=>{ if (groups.length<3) spawnShoal(rint(7,11)); } },
-    { k:'lurefire', every:1.9, needParts:1, fn:(b)=>{ const p=b.parts[0];
+    { k:'lurefire', warn:'ring', wd:0.55, every:1.9, needParts:1, fn:(b)=>{ const p=b.parts[0];
         ring(p.x,p.y,7,165*BV,rnd(0,TAU),{r:5}); } },
-    { k:'dark', every:7, fn:(b)=>{ b.vars.pulse = 1; } }
+    { k:'dark', every:7, fn:(b)=>{ if (b.parts[0].alive){ b.vars.pulse = 1; Sound.alarm();
+        floatText(b.x,b.y-50,'THE LIGHT DIMS',PAL.ebullet); } } }
   ],
   draw:(b)=>{
     ctx.beginPath(); ctx.ellipse(0,0,46,34,0,0,TAU);
@@ -2240,9 +2268,9 @@ leviathan:{
   },
   coreGuard:(b)=> b.parts.filter(p=>p.alive).length > 2 ? 1 : 0,
   attacks:[
-    { k:'segfire', every:1.5, needParts:1, fn:(b)=>{ const live=b.parts.filter(p=>p.alive);
+    { k:'segfire', warn:'ring', wd:0.55, every:1.5, needParts:1, fn:(b)=>{ const live=b.parts.filter(p=>p.alive);
         if (!live.length) return; const p=pick(live); ring(p.x,p.y,5,150*BV,rnd(0,TAU),{r:5}); } },
-    { k:'maw', every:2.9, fn:(b)=>shotgun(b.x,b.y,P.x,P.y,7,.3,190,290,{r:6}) },
+    { k:'maw', warn:'fan', wd:0.55, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.9, fn:(b)=>shotgun(b.x,b.y,P.x,P.y,7,.3,190,290,{r:6}) },
     { k:'spiral', every:.12, needParts:0, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.44;
         for (let i=0;i<3;i++) fireAng(b.x,b.y,b.vars.s+i/3*TAU,175*BV); } },
     { k:'shoal', every:6, fn:(b)=>{ if (groups.length<2) spawnShoal(rint(6,9)); } }
@@ -2272,13 +2300,13 @@ gauntlet:{
   phaseAt:[.66,.33],
   onPhase:(b,ph)=>{ b.vars.form = ph; ebullets.length=0; whiteout=.25; },
   attacks:[
-    { k:'e1a', every:1.9, phase:[1], fn:(b)=>{ for (let i=-1;i<=1;i++)
+    { k:'e1a', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.9, phase:[1], fn:(b)=>{ for (let i=-1;i<=1;i++)
         fireAng(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x)+i*.2,235*BV); } },
-    { k:'e1b', every:2.6, phase:[1], fn:(b)=>ring(b.x,b.y,16,170*BV,rnd(0,TAU)) },
+    { k:'e1b', warn:'ring', wd:0.55, every:2.6, phase:[1], fn:(b)=>ring(b.x,b.y,16,170*BV,rnd(0,TAU)) },
     { k:'e2a', every:.1,  phase:[2], fn:(b)=>{ b.vars.s=(b.vars.s||0)+.42;
         for (let i=0;i<3;i++) fireAng(b.x,b.y,b.vars.s+i/3*TAU,175*BV); } },
-    { k:'e2b', every:2.2, phase:[2], fn:(b)=>shotgun(b.x,b.y,P.x,P.y,6,.3,200,300,{r:5}) },
-    { k:'e3a', every:2.4, phase:[3], fn:(b)=>gapRing(b.x,b.y,26,165*BV,rnd(0,TAU),rnd(0,TAU),.42) },
+    { k:'e2b', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.2, phase:[2], fn:(b)=>shotgun(b.x,b.y,P.x,P.y,6,.3,200,300,{r:5}) },
+    { k:'e3a', warn:'ring', wd:0.55, every:2.4, phase:[3], fn:(b)=>gapRing(b.x,b.y,26,165*BV,rnd(0,TAU),rnd(0,TAU),.42) },
     { k:'e3b', every:4.2, phase:[3], fn:(b)=>lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x),1,1.6) },
     { k:'add',  every:5, fn:(b)=>{ if (enemies.length<8){
         const t = ['drifter','cinder','blinker'][b.vars.form-1];
@@ -2308,12 +2336,12 @@ quietstar:{
     { k:'spiral', every:(b)=>b.phase>=3?.075:.13, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.38;
         const arms = 2+b.phase;
         for (let i=0;i<arms;i++) fireAng(b.x,b.y,b.vars.s+i/arms*TAU,160*BV); } },
-    { k:'shard', every:2.1, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.55)
+    { k:'shard', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.1, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.55)
         fireAt(p.x,p.y,P.x,P.y,235*BV,{r:5}); } },
-    { k:'wall', every:3.4, phase:[2,3,4], fn:(b)=>{ const gap=rnd(W*.15,W*.85);
+    { k:'wall', warn:'line', wd:0.6, every:3.4, phase:[2,3,4], fn:(b)=>{ const gap=rnd(W*.15,W*.85);
         for (let x=10;x<W;x+=36){ if (Math.abs(x-gap)<58) continue; fireAng(x,-14,Math.PI/2,155*BV,{r:6}); } } },
-    { k:'gap', every:2.7, phase:[2,3,4], fn:(b)=>gapRing(b.x,b.y,30,150*BV,rnd(0,TAU),rnd(0,TAU),.4) },
-    { k:'orbs', every:2.4, phase:[3,4], fn:(b)=>{ for (let i=-1;i<=1;i++)
+    { k:'gap', warn:'ring', wd:0.55, every:2.7, phase:[2,3,4], fn:(b)=>gapRing(b.x,b.y,30,150*BV,rnd(0,TAU),rnd(0,TAU),.4) },
+    { k:'orbs', warn:'point', wd:0.48, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), every:2.4, phase:[3,4], fn:(b)=>{ for (let i=-1;i<=1;i++)
         fireAt(b.x,b.y,P.x+i*70,P.y,115*BV,{r:10,big:true}); } },
     { k:'lance', every:4.6, phase:[3,4], fn:(b)=>{ const a=Math.atan2(P.y-b.y,P.x-b.x);
         lance(b.x,b.y,a,1,1.7); lance(b.x,b.y,a+TAU/3,1,1.7); lance(b.x,b.y,a+TAU*2/3,1,1.7); } },
@@ -2465,7 +2493,7 @@ const RELICS = [
   { k:'lens',    n:'Burning Lens', d:'Focused fire hits far harder.' },
   { k:'bulwark', n:'Bulwark',      d:'A shield rebuilds itself every twenty seconds.' },
   { k:'well',    n:'Gravity Well', d:'Crystals fall toward you from anywhere on screen.' },
-  { k:'twin',    n:'Twin Chorus',  d:'Two more drones, past the usual limit.' },
+  { k:'twin', warn:'ring', wd:0.55, n:'Twin Chorus',  d:'Two more drones, past the usual limit.' },
   { k:'bore',    n:'Wide Bore',    d:'Heavier shots that punch through one more hull.' },
   { k:'surge',   n:'Overcharge',   d:'Overdrive builds twice as fast and runs longer.' },
   { k:'spite',   n:'Spite',        d:'Every kill splashes damage into whatever stands nearest.' }
@@ -2839,10 +2867,10 @@ harrow:{
   parts:()=>[{ox:-84,oy:8,hp:60,r:24,kind:'blade'},{ox:0,oy:-30,hp:70,r:24,kind:'blade'},{ox:84,oy:8,hp:60,r:24,kind:'blade'}],
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.62)*(W*.3); },
   attacks:[
-    { k:'rake', every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts){ if (!p.alive) continue;
+    { k:'rake', warn:'line', wd:0.6, every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts){ if (!p.alive) continue;
         for (let i=0;i<4;i++) fireAng(p.x,p.y, Math.PI/2 + (i-1.5)*.16, 240*BV, {curve:(p.ox<0?.35:-.35)}); } } },
     { k:'sweep', every:5.5, first:4, fn:(b)=>{ for (let i=0;i<20;i++) fireAng(b.x,b.y, Math.PI*(.15+.7*i/19), 150*BV); } },
-    { k:'squall', every:1.1, phase:[2], fn:(b)=>{ for (let i=0;i<3;i++) fireAng(rnd(20,W-20),-16,Math.PI/2,rnd(230,320)*BV,{r:5}); } }
+    { k:'squall', warn:'line', wd:0.6, every:1.1, phase:[2], fn:(b)=>{ for (let i=0;i<3;i++) fireAng(rnd(20,W-20),-16,Math.PI/2,rnd(230,320)*BV,{r:5}); } }
   ],
   draw:(b)=>{
     ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=7;
@@ -2859,11 +2887,15 @@ cairn:{
   key:'cairn', label:'Cairn · the stacked dead', hp:560, r:52, y:.2, reward:15000, final:true, phaseAt:[.66,.33],
   parts:()=>{ const a=[]; for (let i=0;i<4;i++) a.push({ ox:0, oy:-56+i*38, hp:70, r:34, kind:'slab' }); return a; },
   coreGuard:(b)=> b.parts.some(p=>p.alive) ? .55 : 0,
+  /* every slab you drop collapses into the arena — the room closes as you win */
+  tick:(b)=>{ const dead = b.parts.filter(p=>!p.alive).length;
+    const inset = dead*(W*.085);
+    arena = dead ? { x0:14+inset, x1:W-14-inset, y0:40, y1:H-30 } : null; },
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.4)*(W*.24); },
   attacks:[
-    { k:'slabs', every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.7)
+    { k:'slabs', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.7)
         for (let i=-1;i<=1;i++) fireAng(p.x,p.y, Math.atan2(P.y-p.y,P.x-p.x)+i*.24, 225*BV); } },
-    { k:'gap', every:3.6, fn:(b)=> gapRing(b.x,b.y,26,165*BV,rnd(0,TAU),rnd(0,TAU),.55) },
+    { k:'gap', warn:'ring', wd:0.55, every:3.6, fn:(b)=> gapRing(b.x,b.y,26,165*BV,rnd(0,TAU),rnd(0,TAU),.55) },
     { k:'toll', every:6, first:5, phase:[2,3], fn:(b)=>{ lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x),1.1,1.6); } },
     { k:'grind', every:.12, phase:[3], fn:(b)=>{ b.vars.s=(b.vars.s||0)+.37;
         for (let i=0;i<3;i++) fireAng(b.x,b.y,b.vars.s+i/3*TAU,190*BV); } }
@@ -2882,12 +2914,16 @@ cairn:{
 bract:{
   key:'bract', label:'Bract · the growing fan', hp:340, r:46, y:.19, reward:7000, spin:.3,
   parts:()=>{ const a=[]; for (let i=0;i<5;i++) a.push({ a:(i/5)*Math.PI - Math.PI*.1, rad:86, hp:52, r:26, kind:'node' }); return a; },
+  /* the fan has a seam on its underside; it spins, so you have to chase the opening */
+  coreGuard:(b,ang)=>{ if (ang===undefined) return 0;
+    const seam = b.spin + Math.PI/2;
+    return Math.abs(((ang-seam+Math.PI*3)%TAU)-Math.PI) < .9 ? 0 : .85; },
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.5)*(W*.26); },
   onPartDeath:(b)=>{ if (enemies.length<20) spawnEnemy('mote', b.x+rnd(-40,40), b.y+30, {}); },
   attacks:[
-    { k:'nodes', every:2.4, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.55)
+    { k:'nodes', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.4, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.55)
         fireAt(p.x,p.y,P.x,P.y,210*BV,{hom:.35}); } },
-    { k:'bloom', every:3.8, fn:(b)=>{ const off=rnd(0,TAU);
+    { k:'bloom', warn:'ring', wd:0.55, every:3.8, fn:(b)=>{ const off=rnd(0,TAU);
         ring(b.x,b.y,10,140*BV,off); ring(b.x,b.y,10,200*BV,off+.3); } },
     { k:'spore', every:4.4, fn:(b)=>{ if (enemies.length<22) for (let i=0;i<2;i++)
         spawnEnemy('mote', b.x+rnd(-50,50), b.y+20, {}); } }
@@ -2909,13 +2945,20 @@ bract:{
 medusa:{
   key:'medusa', label:'Medusa · the slow bell', hp:640, r:58, y:.21, reward:17000, final:true, phaseAt:[.6,.28],
   parts:()=>{ const a=[]; for (let i=0;i<6;i++) a.push({ a:Math.PI*(.15+.7*i/5), rad:96, hp:44, r:22, kind:'tendril' }); return a; },
+  /* it keeps putting stalks between you and the bell; the bell is sealed while any stand */
+  coreGuard:(b)=> bossAdds()>0 ? 1 : 0,
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.36)*(W*.22); b.vars.bell = (Math.sin(b.t*1.4)+1)/2; },
   attacks:[
-    { k:'pulse', every:2.8, fn:(b)=>{ const n = b.phase>=3?22:16;
+    { k:'pulse', warn:'ring', wd:0.55, every:2.8, fn:(b)=>{ const n = b.phase>=3?22:16;
         gapRing(b.x,b.y,n,150*BV,rnd(0,TAU),rnd(0,TAU),.5); } },
-    { k:'sting', every:2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.5)
+    { k:'sting', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.5)
         fireAt(p.x,p.y,P.x,P.y,235*BV); } },
-    { k:'drift', every:5, phase:[2,3], fn:(b)=> ring(b.x,b.y,9,95*BV,rnd(0,TAU),{hom:.6,r:8}) },
+    { k:'stalks', every:6, first:1.5, fn:(b)=>{ if (bossAdds()>=3) return;
+        for (let i=0;i<2;i++) summon(b,'angler', b.x+rnd(-120,120), b.y+70, {holdY:b.y+120});
+        /* a sealed core with no explanation is just a wall — say why */
+        teach('stalks','The bell is <b>sealed while its stalks stand</b>. Clear them first.');
+        floatText(b.x,b.y-56,'STALKS RISE',PAL.ebullet); } },
+    { k:'drift', warn:'ring', wd:0.55, every:5, phase:[2,3], fn:(b)=> ring(b.x,b.y,9,95*BV,rnd(0,TAU),{hom:.6,r:8}) },
     { k:'veil', every:7, first:6, phase:[3], fn:(b)=>{ lance(b.x,b.y,rnd(0,TAU),1.1,1.7); lance(b.x,b.y,rnd(0,TAU),1.1,1.7); } }
   ],
   draw:(b)=>{
@@ -2938,10 +2981,11 @@ cantor:{
   parts:()=>[{a:-Math.PI*.75,rad:92,hp:56,r:24,kind:'voice'},{a:-Math.PI*.25,rad:92,hp:56,r:24,kind:'voice'}],
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.7)*(W*.3); },
   attacks:[
-    { k:'beat', every:(b)=>b.phase>1?1.15:1.5, fn:(b)=>{ b.vars.n=(b.vars.n||0)+1;
+    /* it is called "keeps the time" — so it now actually keeps it, firing only on the bar */
+    { k:'beat', warn:'ring', wd:0.55, every:(b)=>b.phase>1?1.15:1.5, gate:(b)=>beatTick, fn:(b)=>{ b.vars.n=(b.vars.n||0)+1;
         const n = b.vars.n%4===0 ? 20 : 12;
         gapRing(b.x,b.y,n,175*BV,rnd(0,TAU),rnd(0,TAU),.45); } },
-    { k:'voices', every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'voices', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         for (let i=-1;i<=1;i++) fireAng(p.x,p.y,Math.atan2(P.y-p.y,P.x-p.x)+i*.3,250*BV); } },
     { k:'hold', every:8, first:6, phase:[2], fn:(b)=> lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x),1.2,2) }
   ],
@@ -2963,9 +3007,9 @@ basilica:{
   coreGuard:(b)=> b.parts.some(p=>p.alive) ? .7 : 0,
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.32)*(W*.2); },
   attacks:[
-    { k:'chord', every:3.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'chord', warn:'ring', wd:0.55, every:3.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         ring(p.x,p.y,10,150*BV,rnd(0,TAU)); } },
-    { k:'descant', every:1.9, fn:(b)=> gapRing(b.x,b.y, b.phase>=3?26:18, 170*BV, rnd(0,TAU), rnd(0,TAU), .5) },
+    { k:'descant', warn:'ring', wd:0.55, every:1.9, fn:(b)=> gapRing(b.x,b.y, b.phase>=3?26:18, 170*BV, rnd(0,TAU), rnd(0,TAU), .5) },
     { k:'unison', every:6.5, first:5, phase:[2,3], fn:(b)=>{ for (const p of b.parts) if (p.alive)
         lance(p.x,p.y,Math.atan2(P.y-p.y,P.x-p.x),1.15,1.4); } },
     { k:'organ', every:.11, phase:[3], fn:(b)=>{ b.vars.s=(b.vars.s||0)+.33;
@@ -2991,14 +3035,14 @@ loom:{
   parts:()=>[{ox:-96,oy:0,hp:66,r:26,kind:'spindle'},{ox:96,oy:0,hp:66,r:26,kind:'spindle'}],
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.55)*(W*.18); },
   attacks:[
-    { k:'warp', every:2.8, fn:(b)=>{ const gap=rnd(W*.15,W*.85), gw=W*.12;
+    { k:'warp', warn:'line', wd:0.6, every:2.8, fn:(b)=>{ const gap=rnd(W*.15,W*.85), gw=W*.12;
         for (let x=14;x<W;x+=W/15) if (Math.abs(x-gap)>gw) fireAng(x,-16,Math.PI/2,180*BV,{r:6}); } },
-    { k:'weft', every:3.4, first:2, fn:(b)=>{ const gap=rnd(H*.2,H*.8), gw=H*.14, side=Math.random()<.5;
+    { k:'weft', warn:'line', wd:0.6, every:3.4, first:2, fn:(b)=>{ const gap=rnd(H*.2,H*.8), gw=H*.14, side=Math.random()<.5;
         for (let y=40;y<H;y+=H/14) if (Math.abs(y-gap)>gw)
           fireAng(side?-16:W+16, y, side?0:Math.PI, 170*BV,{r:6}); } },
-    { k:'spindles', every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'spindles', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         fireAt(p.x,p.y,P.x,P.y,265*BV,{r:5}); } },
-    { k:'knot', every:4.2, phase:[2], fn:(b)=> ring(b.x,b.y,16,190*BV,rnd(0,TAU),{curve:.5}) }
+    { k:'knot', warn:'ring', wd:0.55, every:4.2, phase:[2], fn:(b)=> ring(b.x,b.y,16,190*BV,rnd(0,TAU),{curve:.5}) }
   ],
   draw:(b)=>{
     ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=4;
@@ -3019,11 +3063,11 @@ reflection:{
     b.ty = H*.2 + Math.sin(b.t*.5)*H*.05;
   },
   attacks:[
-    { k:'volley', every:(b)=>b.phase>=3?.55:.85, fn:(b)=>{
+    { k:'volley', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:(b)=>b.phase>=3?.55:.85, fn:(b)=>{
         const n = 1 + Math.min(4, b.phase+1);
         for (let i=0;i<n;i++) fireAng(b.x,b.y, Math.PI/2 + (i-(n-1)/2)*.13, 300*BV, {r:5}); } },
-    { k:'answer', every:3.2, fn:(b)=> fireAt(b.x,b.y,P.x,P.y,260*BV,{hom:.5,r:8}) },
-    { k:'twin', every:5.5, phase:[2,3], fn:(b)=>{ ring(b.x,b.y,14,200*BV,rnd(0,TAU)); } },
+    { k:'answer', warn:'point', wd:0.48, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), every:3.2, fn:(b)=> fireAt(b.x,b.y,P.x,P.y,260*BV,{hom:.5,r:8}) },
+    { k:'twin', warn:'ring', wd:0.55, every:5.5, phase:[2,3], fn:(b)=>{ ring(b.x,b.y,14,200*BV,rnd(0,TAU)); } },
     { k:'cut', every:7, first:6, phase:[3], fn:(b)=> lance(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x),1,1.5) }
   ],
   draw:(b)=>{
@@ -3046,9 +3090,9 @@ valve:{
   coreGuard:(b)=> (Math.sin(b.t*1.6) > 0 ? .85 : 0),
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.48)*(W*.24); },
   attacks:[
-    { k:'systole', every:2.4, fn:(b)=>{ const open = Math.sin(b.t*1.6) <= 0;
+    { k:'systole', warn:'ring', wd:0.55, every:2.4, fn:(b)=>{ const open = Math.sin(b.t*1.6) <= 0;
         ring(b.x,b.y, open?18:10, open?200*BV:150*BV, rnd(0,TAU)); } },
-    { k:'cusps', every:2.9, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
+    { k:'cusps', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.9, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
         fireAt(p.x,p.y,P.x,P.y,230*BV); } },
     { k:'clot', every:4.6, phase:[2], fn:(b)=>{ if (enemies.length<20) for (let i=0;i<2;i++)
         spawnEnemy('mote', b.x+rnd(-60,60), b.y+24, {}); } }
@@ -3075,11 +3119,11 @@ heart:{
   coreGuard:(b)=> b.parts.some(p=>p.alive) ? .5 : 0,
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.3)*(W*.16); b.vars.beat = Math.max(0,Math.sin(b.t*1.9)); },
   attacks:[
-    { k:'pump', every:1.9, fn:(b)=>{ const n = 12 + b.phase*4;
+    { k:'pump', warn:'ring', wd:0.55, every:1.9, fn:(b)=>{ const n = 12 + b.phase*4;
         gapRing(b.x,b.y,n,160*BV,rnd(0,TAU),rnd(0,TAU),.5); } },
-    { k:'arteries', every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
+    { k:'arteries', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.6, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive)
         for (let i=-1;i<=1;i++) fireAng(p.x,p.y,Math.atan2(P.y-p.y,P.x-p.x)+i*.22,240*BV); } },
-    { k:'flood', every:3.4, phase:[2,3,4], fn:(b)=>{ for (let i=0;i<4;i++)
+    { k:'flood', warn:'line', wd:0.6, every:3.4, phase:[2,3,4], fn:(b)=>{ for (let i=0;i<4;i++)
         fireAng(rnd(20,W-20),-16,Math.PI/2,rnd(210,300)*BV,{r:6}); } },
     { k:'seize', every:6, first:5, phase:[3,4], fn:(b)=>{ lance(b.x,b.y,rnd(0,TAU),1.1,1.6); } },
     { k:'arrest', every:.1, phase:[4], fn:(b)=>{ b.vars.s=(b.vars.s||0)+.36;
@@ -3107,13 +3151,17 @@ heart:{
 keeper:{
   key:'keeper', label:'Keeper · the last door', hp:520, r:48, y:.19, reward:12000, spin:.5, phaseAt:[.66,.33],
   parts:()=>{ const a=[]; for (let i=0;i<6;i++) a.push({ a:i/6*TAU, rad:96, hp:50, r:22, kind:'bolt' }); return a; },
+  /* six bolts hold the door. While any live, the core is sealed — but a bolt only takes damage
+     from in front of it, so you have to come round to the face you want open. */
   coreGuard:(b)=> b.parts.some(p=>p.alive) ? 1 : 0,
+  hitArc:(b,p,ang)=>{ const face = p.a + b.spin;
+    return Math.abs(((ang-face+Math.PI*3)%TAU)-Math.PI) < .8; },
   move:(b)=>{ b.tx = W/2 + Math.sin(b.t*.44)*(W*.22); },
   attacks:[
-    { k:'bolts', every:2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.5)
+    { k:'bolts', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.5)
         fireAt(p.x,p.y,P.x,P.y,285*BV,{r:5}); } },
-    { k:'lock', every:3.4, fn:(b)=> gapRing(b.x,b.y,24,175*BV,rnd(0,TAU),rnd(0,TAU),.45) },
-    { k:'open', every:1.3, needParts:0, fn:(b)=>{ for (let i=-2;i<=2;i++)
+    { k:'lock', warn:'ring', wd:0.55, every:3.4, fn:(b)=> gapRing(b.x,b.y,24,175*BV,rnd(0,TAU),rnd(0,TAU),.45) },
+    { k:'open', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:1.3, needParts:0, fn:(b)=>{ for (let i=-2;i<=2;i++)
         fireAng(b.x,b.y,Math.atan2(P.y-b.y,P.x-b.x)+i*.18,300*BV,{r:5}); } },
     { k:'sweep', every:6, first:5, phase:[2,3], fn:(b)=>{ lance(b.x,b.y,rnd(0,TAU),1.05,1.6); } }
   ],
@@ -3140,14 +3188,16 @@ aperture:{
   attacks:[
     { k:'iris', every:.13, fn:(b)=>{ b.vars.s=(b.vars.s||0)+.34; const arms=1+b.phase;
         for (let i=0;i<arms;i++) fireAng(b.x,b.y,b.vars.s+i/arms*TAU,175*BV); } },
-    { k:'petals', every:2.4, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
+    { k:'petals', warn:'fan', wd:0.5, wa:(b)=>Math.atan2(P.y-b.y,P.x-b.x), wn:.8, every:2.4, needParts:1, fn:(b)=>{ for (const p of b.parts) if (p.alive && Math.random()<.6)
         for (let i=-1;i<=1;i++) fireAng(p.x,p.y,Math.atan2(P.y-p.y,P.x-p.x)+i*.2,255*BV); } },
-    { k:'gate', every:3.2, fn:(b)=> gapRing(b.x,b.y, 22+b.phase*3, 165*BV, rnd(0,TAU), rnd(0,TAU), .45) },
-    { k:'wall', every:4.6, phase:[2,3,4,5], fn:(b)=>{ const gap=rnd(W*.15,W*.85), gw=W*.11;
+    { k:'gate', warn:'ring', wd:0.55, every:3.2, fn:(b)=> gapRing(b.x,b.y, 22+b.phase*3, 165*BV, rnd(0,TAU), rnd(0,TAU), .45) },
+    { k:'wall', warn:'line', wd:0.6, every:4.6, phase:[2,3,4,5], fn:(b)=>{ const gap=rnd(W*.15,W*.85), gw=W*.11;
         for (let x=14;x<W;x+=W/14) if (Math.abs(x-gap)>gw) fireAng(x,-16,Math.PI/2,190*BV,{r:7}); } },
-    { k:'seek', every:3.6, phase:[3,4,5], fn:(b)=> ring(b.x,b.y,7,110*BV,rnd(0,TAU),{hom:.6,r:8}) },
+    /* slow, heavy, and reflectable — sector 12's own shards hazard already taught you that
+   things bounce here, so a bomb timed into this sends it back */
+    { k:'seek', warn:'ring', wd:0.55, every:3.6, phase:[3,4,5], fn:(b)=> ring(b.x,b.y,7,110*BV,rnd(0,TAU),{hom:.6,r:8,refl:true}) },
     { k:'cut', every:5.5, phase:[3,4,5], fn:(b)=>{ lance(b.x,b.y,rnd(0,TAU),1,1.7); } },
-    { k:'collapse', every:1.6, phase:[5], fn:(b)=>{ for (let i=0;i<3;i++)
+    { k:'collapse', warn:'line', wd:0.6, every:1.6, phase:[5], fn:(b)=>{ for (let i=0;i<3;i++)
         fireAng(rnd(20,W-20),-16,Math.PI/2,rnd(240,340)*BV,{r:6}); } }
   ],
   draw:(b)=>{
