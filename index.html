@@ -522,6 +522,13 @@ let diff = DIFF.arcade, speedIdx = 2;
    Deterministic — no RNG or wall-clock — so Daily Drift stays reproducible. */
 let rank = 0, BV = 1, RATE = 1;
 const RANK_BV = 0.35, RANK_RATE = 0.30;
+/* gear pressure (#20): rank alone watches how well you FLY, and was blind to what
+   you're flying WITH — so a fully-kitted ship met the same curtains as a stripped
+   one and simply out-gunned them. The opposition now answers the build: a heavy
+   loadout draws faster bullets, tighter cadence and denser geometry, while a
+   stripped hull is given real air. This is the #7 lever — pressure, not padding. */
+const GEAR_BV = 0.38, GEAR_RATE = 0.42, GREEN_RELIEF = 0.22;
+let gear = 0;
 const BEAT_SEC = 60/96;            /* gameplay beat clock, matched to the 96 BPM score (#10) */
 let lastBeat = -1, beatCount = 0, beatTick = false;
 
@@ -571,7 +578,7 @@ const volleyShare = n => 1/(1 + SPREAD_TAPER*(n-1));
    to elite/boss HP scaling below. Mirrors the cannon maths in updatePlayer. */
 function loadoutPower(){
   const m = P.mods;
-  const dmg = BASE_DMG*(1+powerBonus(m.power))*dmgMul;
+  const dmg = BASE_DMG*(1+powerBonus(m.power))*dmgPotential();
   const n = volleyShots(m,0);
   let perVolley = dmg*volleyShare(n)*n;                 /* main arc, all shots landing */
   if (m.power>=4) perVolley += dmg*.45*2;               /* the outboard pair */
@@ -579,6 +586,17 @@ function loadoutPower(){
   let dps = perVolley/rate;
   dps += drones.length*DRONE_DMG/.3;                    /* escorts chip in too */
   return Math.max(1, dps/(BASE_DMG/BASE_RATE));
+}
+/* Break is a button you hold, not a surprise: a fight has to be built for the
+   damage you CAN bring, not the damage you happen to be doing at spawn. */
+function dmgPotential(){
+  const R = P.relics||{};
+  return 1 + .45 + (R.bore?.15:0) + (R.lens?.2:0);
+}
+/* 0..1 — how heavily kitted the ship is, on a log scale so the first pickups
+   register and the top end doesn't run away. */
+function gearPressure(){
+  return clamp(Math.log2(loadoutPower())/Math.log2(11), 0, 1);
 }
 /* Elites and bosses stiffen as you gear up, so the fight still happens — but
    sub-linearly, so power always outruns HP and nothing becomes a sponge (#7).
@@ -1047,9 +1065,14 @@ function fireAng(x,y,a,sp,o){
                   t:0, big:(o&&o.big)||false });
 }
 function fireAt(x,y,tx,ty,sp,o){ fireAng(x,y,Math.atan2(ty-y,tx-x),sp,o); }
-/* #7: harder = denser geometry, not more HP. Void adds a tier; sustained high rank adds another.
-   Layers are deterministic (fixed offsets), preserving any safe lane a pattern leaves. */
-function geoTier(){ return (diff.key==='void'?1:0) + (rank>0.6?1:0); }
+/* #7: harder = denser geometry, not more HP. Void adds a tier; sustained high rank
+   adds another; so does a heavy loadout — the curtain thickens to meet your guns
+   instead of the boss growing hit points. Capped at the two layers the patterns
+   are authored for. Layers are deterministic (fixed offsets), preserving any safe
+   lane a pattern leaves. */
+function geoTier(){
+  return Math.min(2, (diff.key==='void'?1:0) + (rank>0.6?1:0) + (gear>0.45?1:0));
+}
 function ring(x,y,n,sp,off,o){
   const g = geoTier();
   for (let i=0;i<n;i++) fireAng(x,y,off+i/n*TAU,sp,o);
@@ -3129,8 +3152,12 @@ function updateAmbient(dt){
 function update(dt){
   /* ---- Director: rank, effective velocity/cadence, beat clock (all deterministic) ---- */
   if (P.alive) rank = clamp(rank + dt*(0.008 + clamp(mult/16,0,1)*0.02), 0, 1);
-  BV = diff.bv * (1 + rank*RANK_BV);
-  RATE = diff.rate * (1 + rank*RANK_RATE);
+  /* gear answers the build, rank answers the flying; a stripped ship gets relief
+     that fades as the loadout fills, so the opening breathes and the late run bites */
+  gear = gearPressure();
+  const green = (1-gear)*GREEN_RELIEF;
+  BV   = diff.bv   * (1 + rank*RANK_BV   + gear*GEAR_BV   - green);
+  RATE = diff.rate * (1 + rank*RANK_RATE + gear*GEAR_RATE - green);
   { const nb = Math.floor(elapsed/BEAT_SEC); beatTick = (nb !== lastBeat); if (beatTick){ lastBeat = nb; beatCount++; } }
 
   runLevelScript(dt);
@@ -3909,7 +3936,8 @@ function screenHelp(){
       <div class="grpLabel" style="margin-top:18px">Difficulty &amp; flow</div>
       <p><b>Baseline.</b> Three difficulties — <em>Drift</em> (forgiving), <em>Arcade</em> (as tuned), <em>Void</em> (unkind) — plus a speed slider.</p>
       <p><b>Dynamic rank.</b> A hidden engine watches how you're flying: survive cleanly and aggressively and enemy fire quietly speeds up; take a hit and it eases off. On Void — or once you're flying well — patterns thicken into overlapping curtains rather than turning enemies into sponges. If a gap exists, there is always a way through.</p>
-      <p><b>Bosses answer your build.</b> Wardens and the heavier escorts are armoured against the loadout that actually arrives, so a late-run ship meets a fight worth having instead of deleting it — but only part-way, so gearing up always wins you time. Trash never scales: melting waves is what the build is <em>for</em>. And a boss holds each phase long enough to show it, so no amount of damage skips its choreography.</p>
+      <p><b>Gear pressure.</b> Rank watches how well you <em>fly</em>; a second engine watches what you're flying <em>with</em>. Fill out the loadout and the drift answers in kind — bullets fly faster, patterns come tighter, and curtains gain a layer. Fly in stripped and it gives you real air instead. Your guns buy speed, never safety.</p>
+      <p><b>Bosses answer your build.</b> Wardens and the heavier escorts are armoured against the loadout that actually arrives — including the Break you're holding — so a late-run ship meets a fight worth having instead of deleting it. Only part-way, though: gearing up always wins you time. Trash never scales; melting waves is what the build is <em>for</em>. And a boss holds each phase long enough to show it, so no amount of damage skips its choreography.</p>
 
       <div class="grpLabel" style="margin-top:18px">Your run</div>
       <p><b>Twelve sectors,</b> each with its own palette, roster, hazard, mid-boss and warden. A checkpoint sits right after each mid-boss — run out of lives past it and you can resume there.</p>
