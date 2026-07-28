@@ -683,6 +683,7 @@ function eliteScale(baseHP){
 const PHASE_MIN = 5, DEFAULT_PHASES = [.66,.33];
 
 function clearField(){
+  shieldCount = 0;
   enemies=[]; ebullets=[]; pbullets=[]; pickups=[]; parts=[]; floats=[]; lasers=[]; shocks=[]; groups=[]; ground=[]; groundFx=[]; warns=[];
   boss=null; curveField=0; pullField=0;
 }
@@ -928,14 +929,14 @@ const TYPES = {
   turret: { hp:9,  r:20, score:260, speed:60,  home:0, draw:dwTurret  },
   sentry: { hp:16, r:23, score:420, speed:44,  home:0, draw:dwSentry  },
   /* sector 2 — the boneyard runs on salvage */
-  hauler: { hp:26, r:30, score:600, speed:34,  home:1, draw:dwHauler  },
+  hauler: { hp:26, r:30, score:600, speed:34,  home:1, prio:true, shieldR:130, draw:dwHauler  },
   scavver:{ hp:5,  r:14, score:220, speed:0,   home:1, draw:dwScavver },
   /* sector 3 — everything here divides or burns */
   cinder: { hp:6,  r:18, score:240, speed:70,  home:2, draw:dwCinder  },
   ember:  { hp:2,  r:10, score:90,  speed:120, home:2, draw:dwEmber   },
   /* sector 4 — geometry that refuses to be hit honestly */
   blinker:{ hp:6,  r:15, score:280, speed:0,   home:3, draw:dwBlinker },
-  prism:  { hp:12, r:20, score:380, speed:52,  home:3, draw:dwPrism   },
+  prism:  { hp:12, r:20, score:380, speed:52,  home:3, reflect:true, draw:dwPrism   },
   /* sector 5 — things that move together, and things that wait */
   shoal:  { hp:1,  r:9,  score:60,  speed:0,   home:4, draw:dwShoal   },
   angler: { hp:14, r:22, score:520, speed:40,  home:4, draw:dwAngler  }
@@ -946,9 +947,14 @@ function spawnEnemy(type,x,y,opts){
   const hp = t.hp*diff.hp*eliteScale(t.hp);
   const e = Object.assign({
     type, x, y, r:t.r, hp, maxhp:hp, t:0, fireT:rnd(.6,1.6), salvo:null, alive:true,
-    tell:0, tellMax:0, tellKind:0, tellA:0, tellN:0, shieldR:t.shieldR||0, prio:!!t.prio,
+    tell:0, tellMax:0, tellKind:0, tellA:0, tellN:0, prio:!!t.prio,
+    /* capabilities are gated once, here — a type only gains them a sector after its debut */
+    shieldR:(t.shieldR && tierOf(type)>=1) ? t.shieldR : 0,
+    reflect:!!t.reflect && tierOf(type)>=1,
+    locked:false, refT:0, woke:false,
     vx:0, vy:t.speed, ang:0, flash:0, phase:rnd(0,TAU), drop:null, state:'in', holdY:H*.2
   }, opts||{});
+  if (e.shieldR>0) shieldCount++;
   enemies.push(e);
   return e;
 }
@@ -1007,8 +1013,14 @@ function updateEnemy(e,dt){
   switch (e.type){
     case 'wisp':
       e.y += e.vy*dt*.7; e.x += Math.sin(e.t*.9+e.phase)*90*dt;
-      e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2.2,3.2); fireAt(e.x,e.y,P.x,P.y,105*BV,{hom:.8,r:7}); }
+      { const Tz = tierOf('wisp');
+        if (e.tell<=0 && e.tellKind===TK.point){
+          e.tellKind = TK.none;
+          fireAt(e.x,e.y,P.x,P.y,105*BV,{hom:Tz===0?.6:.8,r:7});
+          if (Tz>=2) fireAt(e.x,e.y,P.x,P.y,118*BV,{hom:.5,curve:.9,r:7});   /* pincer partner */
+        }
+        e.fireT -= dt*RATE;
+        if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2.2,3.2); tell(e,TK.point,tellDur(Tz)); } }
       break;
 
     case 'polyp':
@@ -1016,21 +1028,28 @@ function updateEnemy(e,dt){
       e.fireT -= dt*RATE;
       if (e.fireT<=0 && e.y>0){
         e.fireT = rnd(2.4,3.4);
+        /* above the cap it simply holds — swapping to a ring taught the wrong lesson about
+           what a spawner is */
         if (enemies.length < 26){ const m=spawnEnemy('mote', e.x, e.y+18, {}); m.vy=rnd(120,180); }
-        else ring(e.x,e.y,8,150*BV,rnd(0,TAU));
       }
       break;
 
-    case 'chorister':
+    /* the metronome — every chorister on screen fires on the same downbeat, so five of them
+       read as one pattern instead of five overlapping curtains. One gapped ring, not two solid
+       ones: the old pair was 72 bullets a volley at full density. */
+    case 'chorister': {
       if (e.y<e.holdY) e.y += e.vy*dt; else e.x += Math.sin(e.t*.7+e.phase)*52*dt;
-      e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){
-        e.fireT = rnd(2.6,3.6);
-        const off = rnd(0,TAU);
-        ring(e.x,e.y,12,120*BV,off);
-        ring(e.x,e.y,12,180*BV,off+Math.PI/12);
+      const Tc = tierOf('chorister');
+      if (e.tell>0) break;
+      if (e.tellKind===TK.ring){                       /* tell has run out — sing */
+        e.tellKind = TK.none;
+        gapRing(e.x,e.y, 8+Tc*2, 130*BV, e.tellA, e.tellA+Math.PI, .55-Tc*.11);
+        e.beatT = 2;
       }
-      break;
+      e.beatT = (e.beatT===undefined?1:e.beatT) - dt;
+      if (beatTick && beatCount%4===0 && e.beatT<=0 && e.y>0)
+        tell(e, TK.ring, tellDur(Tc), rnd(0,TAU));
+      break; }
 
     case 'warp':
       /* e.bt was never initialised anywhere, so `undefined - dt` was NaN and `NaN <= 0` is
@@ -1043,41 +1062,73 @@ function updateEnemy(e,dt){
         /* it reappears on your flank, not on top of you */
         e.x = clamp(P.x + (Math.random()<.5?-1:1)*rnd(W*.18,W*.34), 30, W-30);
         e.y = clamp(rnd(H*.08,H*.44), 40, H*.52);
-        fireAt(e.x,e.y,P.x,P.y,290*BV,{r:5});
+        /* blinker scatters from anywhere; warp lays a rail down your flank */
+        tell(e, TK.line, tellDur(tierOf('warp')), Math.atan2(P.y-e.y, P.x-e.x));
+      }
+      if (e.tell<=0 && e.tellKind===TK.line){
+        e.tellKind = TK.none;
+        const Tr = tierOf('warp');
+        fireAng(e.x,e.y,e.tellA,290*BV,Tr>=1?{r:5,acc:1.2}:{r:5});
+        if (Tr>=2) salvo(e,1,.22,(en)=>fireAng(en.x,en.y,en.tellA,290*BV,{r:5,acc:1.2}));
       }
       break;
 
+    /* the only enemy with no telegraph, because its body already is one: dwPulsar swells on
+       exactly the sin() that fires it. Slow and wide — you walk out of this, you don't thread it. */
     case 'pulsar': {
       if (e.y<e.holdY) e.y += e.vy*dt; else e.x += Math.sin(e.t*.5+e.phase)*40*dt;
+      const Tp = tierOf('pulsar');
       const beat = Math.sin(e.t*2.2);
-      if (beat > .985 && e.y>0 && (e.beatT||0)<=0){ e.beatT=.5; ring(e.x,e.y,14,165*BV,rnd(0,TAU)); }
+      if (beat > .985 && e.y>0 && (e.beatT||0)<=0){
+        e.beatT = .5;
+        const off = rnd(0,TAU);
+        ring(e.x,e.y,10,118*BV,off);
+        if (Tp>=2) ring(e.x,e.y,10,178*BV,off+Math.PI/10);   /* counter-shell, same beat */
+      }
       e.beatT = (e.beatT||0) - dt;
       break;
     }
 
     case 'mote': {
-      const a = Math.atan2(P.y-e.y,P.x-e.x);
-      const km = 1-Math.pow(1-.015, dt*60);          /* was frame-rate dependent */
-      e.vx = lerp(e.vx, Math.cos(a)*190, km); e.vy = lerp(e.vy, Math.sin(a)*190, km);
+      /* commits once, at spawn, and never corrects — the opposite of ember, which never
+         commits. Dodge a mote once and it is beaten for good. */
+      if (!e.locked){ const a0 = Math.atan2(P.y-e.y,P.x-e.x);
+        e.vx = Math.cos(a0)*190; e.vy = Math.sin(a0)*190; e.locked = true; }
       e.x += e.vx*dt; e.y += e.vy*dt;
       if (fchance(dt*18)) parts.push({x:e.x,y:e.y,vx:0,vy:-20,life:.3,max:.3,r:2,c:PAL.foe,g:0});
       break;
     }
 
+    /* terrain, not threat — past mid-screen it stops weaving and holds a lane, so a row of
+       them becomes a wall you route around rather than a shape that drifts into you */
     case 'drifter':
-      e.y += e.vy*dt; e.x += Math.sin(e.t*1.3+e.phase)*26*dt; break;
+      e.y += e.vy*dt;
+      if (tierOf('drifter')===0 || e.y < H*.45) e.x += Math.sin(e.t*1.3+e.phase)*26*dt;
+      break;
 
     case 'weaver':
       e.y += e.vy*dt*.8; e.x += Math.cos(e.t*2+e.phase)*130*dt;
-      e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(1.4,2.3); fireAt(e.x,e.y,P.x,P.y,190*BV); }
+      { const Tw = tierOf('weaver');
+        if (e.tell<=0 && e.tellKind===TK.fan){
+          e.tellKind = TK.none;
+          if (Tw===0) fireAng(e.x,e.y,e.tellA,190*BV);
+          else for (let i=-1;i<=1;i+=2) fireAng(e.x,e.y, e.tellA+i*.11, 190*BV, Tw>=2?{acc:.7}:null);
+        }
+        e.fireT -= dt*RATE;
+        if (e.fireT<=0 && e.y>0){
+          e.fireT = rnd(1.4,2.3);
+          tell(e, TK.fan, tellDur(Tw), Math.atan2(P.y-e.y,P.x-e.x), .26);
+        } }
       break;
 
     case 'lancer':
-      if (e.state==='in'){ e.y += 130*dt; if (e.y>e.holdY){ e.state='aim'; e.aimT=.55; } }
+      if (e.state==='in'){ e.y += 130*dt;
+        if (e.y>e.holdY){ e.state='aim'; e.aimT = tierOf('lancer')>=2 ? .5 : .7;
+          /* the corridor is committed HERE, not at launch — that is what makes the tell honest */
+          tell(e, TK.line, e.aimT, Math.atan2(P.y-e.y,P.x-e.x)); } }
       else if (e.state==='aim'){
         e.aimT -= dt; e.x += Math.sin(e.t*6)*30*dt;
-        if (e.aimT<=0){ const a=Math.atan2(P.y-e.y,P.x-e.x);
+        if (e.aimT<=0){ const a=e.tellA; e.tellKind=TK.none;
           e.vx=Math.cos(a)*430*BV; e.vy=Math.sin(a)*430*BV; e.state='dive'; }
       } else {
         e.x += e.vx*dt; e.y += e.vy*dt;
@@ -1085,31 +1136,54 @@ function updateEnemy(e,dt){
       }
       break;
 
-    case 'turret':
+    /* the hole where you stand — it skips the centre, so the safe lane is exactly where you
+       were when the aim locked. Hold still through the tell, then don't move. */
+    case 'turret': {
       if (e.y<e.holdY) e.y += e.vy*dt; else e.x += Math.sin(e.t*.8+e.phase)*40*dt;
+      const Tt = tierOf('turret');
+      if (e.tell>0) break;
+      if (e.tellKind===TK.fan){
+        e.tellKind = TK.none;
+        const a = e.tellA;                       /* locked at tell start, never re-aimed */
+        if (Tt===0){ for (let i=-1;i<=1;i+=2) fireAng(e.x,e.y,a+i*.30,200*BV); }
+        else for (const o of [-.34,-.17,.17,.34]) fireAng(e.x,e.y,a+o,200*BV);
+      }
       e.fireT -= dt*RATE;
       if (e.fireT<=0 && e.y>0){
         e.fireT = rnd(1.5,2.2);
-        const base = Math.atan2(P.y-e.y,P.x-e.x);
-        for (let i=-1;i<=1;i++) fireAng(e.x,e.y,base+i*.26,200*BV);
+        tell(e, TK.fan, tellDur(Tt), Math.atan2(P.y-e.y,P.x-e.x), .70);
       }
-      break;
+      break; }
 
-    case 'sentry':
+    /* the marked exit — a ring with a gap aimed at you, shown at its true angle before it
+       fires. The inverse of chorister's "run outward": here you run TO the mark.
+       The angle is locked when the tell starts and never recomputed, or the tell is a lie. */
+    case 'sentry': {
       if (e.y<e.holdY) e.y += e.vy*dt;
       e.ang += dt*1.1; e.x += Math.sin(e.t*.6+e.phase)*55*dt;
+      const Ts = tierOf('sentry'), gapW = .60 - Ts*.10;
+      if (e.tell>0) break;
+      if (e.tellKind===TK.arc){
+        e.tellKind = TK.none;
+        gapRing(e.x,e.y, 8+Ts, 150*BV, e.tellA+.31, e.tellA, gapW);
+        if (Ts>=2) salvo(e,1,.35,(en)=>gapRing(en.x,en.y,9,168*BV,en.tellA+1.1,en.tellA+2.1,gapW));
+      }
       e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2,2.8); ring(e.x,e.y,10,150*BV,rnd(0,TAU)); }
-      break;
+      if (e.fireT<=0 && e.y>0){
+        e.fireT = rnd(2,2.8);
+        tell(e, TK.arc, tellDur(Ts), Math.atan2(P.y-e.y, P.x-e.x), gapW*2);
+      }
+      break; }
 
     case 'hauler': {
       if (e.y<e.holdY) e.y += e.vy*dt; else e.x += Math.sin(e.t*.5+e.phase)*46*dt;
       e.ang += dt*.4;
       e.fireT -= dt*RATE;
+      /* the anchor: it shields what flies with it, so the answer is always "kill the hauler
+         first". Its own fire is a slow unaimed drop — it is a wall, not a shooter. */
       if (e.fireT<=0 && e.y>0){
         e.fireT = rnd(2.2,3.0);
-        /* coughs up a cloud of scrap rather than aimed fire */
-        for (let i=0;i<9;i++) fireAng(e.x,e.y, rnd(0,TAU), rnd(70,180)*BV, { r:5, life:5 });
+        shotgun(e.x,e.y,e.x,e.y+200, 3, .34, 90, 150, { r:5, life:5 });
       }
       break; }
 
@@ -1117,15 +1191,29 @@ function updateEnemy(e,dt){
       /* comes in from a side, dashes across, snipes on the way */
       e.x += e.dir*260*dt*(1+Math.sin(e.t*3)*.35);
       e.y += Math.sin(e.t*2.6+e.phase)*70*dt;
-      e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.x>0 && e.x<W){ e.fireT=rnd(1,1.7); fireAt(e.x,e.y,P.x,P.y,255*BV,{r:5}); }
+      /* one decision per pass: it crosses once and throws a single spread, telegraphed.
+         (Not a lance — lance() fires Sound.alarm() unconditionally and twenty of these would
+         be a siren.) */
+      { const Tv = tierOf('scavver');
+        if (e.tell<=0 && e.tellKind===TK.fan){
+          e.tellKind = TK.none;
+          shotgun(e.x,e.y,P.x,P.y, Tv===0?3:4, .30, 180, 300, {r:5});
+          if (Tv>=2 && !e.salvo) salvo(e,1,.5,(en)=>shotgun(en.x,en.y,P.x,P.y,3,.34,180,290,{r:5}));
+        }
+        e.fireT -= dt*RATE;
+        if (e.fireT<=0 && e.x>40 && e.x<W-40){
+          e.fireT = 99;                                    /* one pass, one decision */
+          tell(e, TK.fan, tellDur(Tv), Math.atan2(P.y-e.y,P.x-e.x), .60);
+        } }
       if ((e.dir>0 && e.x>W+50)||(e.dir<0 && e.x<-50)) return false;
       return true; }
 
+    /* the thing that divides — no periodic ring any more, because the split is the point and
+       a ring on top of it just made another sentry. Its tell is a STATE, not a timer: below
+       40% hull it visibly cracks, i.e. "this one is about to become two". */
     case 'cinder':
       e.y += e.vy*dt; e.x += Math.sin(e.t*1.1+e.phase)*44*dt; e.ang += dt*1.6;
-      e.fireT -= dt*RATE;
-      if (e.fireT<=0 && e.y>0){ e.fireT=rnd(2,3); ring(e.x,e.y,6,130*BV,e.ang); }   /* match the sprite */
+      if (e.hp <= e.maxhp*.4){ if (e.tellKind!==TK.crack) tell(e,TK.crack,99); e.tell = 1; }
       break;
 
     case 'ember': {
@@ -1142,12 +1230,18 @@ function updateEnemy(e,dt){
       if (e.y<e.holdY){ e.y += 150*dt; break; }
       e.blinkT = (e.blinkT===undefined? rnd(.8,1.6) : e.blinkT) - dt;
       e.fade = clamp((e.blinkT<.25? e.blinkT/.25 : 1),0,1);
+      if (e.tell<=0 && e.tellKind===TK.point){
+        e.tellKind = TK.none;
+        const Tb = tierOf('blinker'), a0 = Math.atan2(P.y-e.y, P.x-e.x);
+        if (Tb===0) fireAng(e.x,e.y,a0,235*BV,{r:5});
+        else for (let i=-1;i<=1;i+=2) fireAng(e.x,e.y, a0 + i*.13, 235*BV, {r:5});
+        if (Tb>=2) fireAng(e.x,e.y,a0,235*BV,{r:5});
+      }
       if (e.blinkT<=0){
         e.blinkT = rnd(1.3,2.0);
         e.x = rnd(W*.12,W*.88); e.y = rnd(H*.08,H*.42);
         spark(e.x,e.y,PAL.foe);
-        { const a0 = Math.atan2(P.y-e.y, P.x-e.x);       /* i was unused: both shots flew the same line */
-          for (let i=-1;i<=1;i+=2) fireAng(e.x,e.y, a0 + i*.13, 235*BV, {r:5}); }
+        tell(e, TK.point, tellDur(tierOf('blinker')));   /* it announces, then shoots */
       }
       break;
 
@@ -1158,6 +1252,7 @@ function updateEnemy(e,dt){
       /* the shield sweeps on its own — wait for it to turn away, then shoot */
       e.sa = (e.sa===undefined? Math.atan2(P.y-e.y,P.x-e.x) : e.sa + dt*1.15);
       e.fireT -= dt*RATE;
+      if (e.refT>0) e.refT -= dt;
       if (e.fireT<=0 && e.y>0){
         e.fireT = rnd(1.8,2.6);
         for (let i=-2;i<=2;i++) fireAng(e.x,e.y, e.sa + i*.16, 190*BV);
@@ -1177,13 +1272,27 @@ function updateEnemy(e,dt){
       e.lure = .5 + Math.sin(e.t*(e.woke?7:2))*.5;   /* the lure races once it has seen you */
       const near = nearP(e,240);
       e.woke = e.woke || near;
+      const Tg = tierOf('angler');
+      if (near && !e.woke){                       /* waking was completely unannounced before */
+        tell(e, TK.ring, tellDur(Tg)+.2);
+        Sound.tick(6);
+      }
       if (e.woke){
-        e.fireT -= dt*RATE;
-        if (e.fireT<=0){
-          e.fireT = rnd(2.4,3.2);
+        if (e.tell<=0 && e.tellKind===TK.ring){
+          e.tellKind = TK.none;
           const base = Math.atan2(P.y-e.y,P.x-e.x);
-          for (let i=-2;i<=2;i++) fireAng(e.x,e.y, base+i*.2, 175*BV, { r:7 });
+          if (Tg===0){ for (let i=-2;i<=2;i++) fireAng(e.x,e.y, base+i*.2, 175*BV, {r:7}); }
+          else {
+            /* three volleys, each narrower — walk out of the cone before it closes. Floored
+               at .12 and capped at three so it can never seal you against a wall. */
+            let k = 0;
+            salvo(e, 3, .34, (en)=>{ const sp = [.28,.20,.12][k++] || .12;
+              const b2 = Math.atan2(P.y-en.y,P.x-en.x);
+              for (let i=-2;i<=2;i++) fireAng(en.x,en.y, b2+i*sp, 175*BV, {r:7}); });
+          }
         }
+        e.fireT -= dt*RATE;
+        if (e.fireT<=0 && !e.salvo){ e.fireT = rnd(2.4,3.2); tell(e,TK.ring,tellDur(Tg)); }
       }
       break; }
   }
@@ -1306,15 +1415,35 @@ function hurtOnSegment(x0,y0,x1,y1,w){
   return false;
 }
 
+/* Reflect (#21). This cannot live in damageEnemy — that function never sees the bullet, which
+   is also why the old arc test used the PLAYER's bearing and so deflected shots that arrived
+   from somewhere else entirely (a drone bolt from the flank). Impact bearing is the honest test.
+
+   Legibility here is structural, not a recolour: the player bullet is deleted and a NEW enemy
+   bullet is pushed the same frame, so from its first rendered frame it is drawn by
+   drawEnemyBullets in the hot band. There is no path by which an enemy-owned projectile can
+   render in a player colour, because the two arrays have separate draw functions.
+   Consumes no RNG — the reflect angle IS the impact angle — so it adds nothing to the seeded
+   stream. The cooldown and speed cap are not optional: without them a rapid+spread build parked
+   on the shield converts its own DPS into incoming fire inside its own approach lane. */
+function prismReflect(e,b){
+  if (!e.reflect || e.refT>0) return false;
+  const a = Math.atan2(b.y-e.y, b.x-e.x);
+  if (Math.abs(((a-e.sa+Math.PI*3)%TAU)-Math.PI) >= .7) return false;
+  const sp = Math.min(340, Math.hypot(b.vx,b.vy)*.85);
+  fireAng(e.x+Math.cos(a)*e.r, e.y+Math.sin(a)*e.r, a, sp*BV, { r:6 });
+  e.refT = .08; e.flash = .5; spark(b.x,b.y,PAL.elaser);
+  return true;
+}
 function damageEnemy(e,dmg,silent){
-  if (e.type==='prism'){
-    /* front arc deflects — the whole point of the thing */
+  if (e.type==='prism' && !e.reflect && !silent){
+    /* tier 0 nullifies; from tier 1 the arc reflects instead, handled at the hit site */
     const a = Math.atan2(P.y-e.y,P.x-e.x);
     let d = Math.abs(((a-e.sa+Math.PI*3)%TAU)-Math.PI);
-    if (d < .7 && !silent){ e.flash=.4; return false; }
+    if (d < .7){ e.flash=.4; return false; }
   }
-  if (ground.length && !silent && enemyShielded(e)){   /* a ground pylon is protecting it (#3) */
-    dmg *= .2;
+  if (!silent && enemyShielded(e)){                     /* a pylon or an escort anchor (#3) */
+    dmg *= ground.length ? .2 : .35;
     if (rand()<.05) floatText(e.x,e.y-e.r,'SHIELDED',PAL.boss);
   }
   e.hp -= dmg; e.flash = 1;
@@ -1322,7 +1451,8 @@ function damageEnemy(e,dmg,silent){
   return false;
 }
 function killEnemy(e,silent){
-  e.alive = false;                     /* so a tell owned by this enemy cancels rather than fires */
+  e.alive = false;
+  if (e.shieldR>0) shieldCount--;                     /* so a tell owned by this enemy cancels rather than fires */
   const i = enemies.indexOf(e);
   if (i>=0) enemies.splice(i,1);
   const T = TYPES[e.type];
@@ -1381,8 +1511,17 @@ function updateGround(dt){
     }
   }
 }
+/* Generalised from ground-pylon-only: any enemy carrying a shieldR now protects what flies with
+   it. `s !== e` matters — a shielder never shields itself, which is what keeps the answer "kill
+   the hauler" instead of "the hauler is unkillable". Air shields are weaker than a pylon's
+   because you can actually reach the source. Guarded by shieldCount so the common case, with no
+   hauler and no pylon alive, is a single integer test in a per-hit path. */
+let shieldCount = 0;
 function enemyShielded(e){
+  if (!ground.length && !shieldCount) return false;
   for (const g of ground) if (g.type==='pylon' && dist2(g.x,g.y,e.x,e.y) < GROUND.pylon.shieldR*GROUND.pylon.shieldR) return true;
+  if (shieldCount) for (const s of enemies)
+    if (s!==e && s.shieldR>0 && s.hp>0 && dist2(s.x,s.y,e.x,e.y) < s.shieldR*s.shieldR) return true;
   return false;
 }
 function damageGround(g,dmg){
@@ -2213,9 +2352,9 @@ PALETTES.push(
 /* --- six new species --- */
 Object.assign(TYPES, {
   wisp:     { hp:7,  r:16, score:300, speed:62,  home:6, draw:dwWisp      },
-  polyp:    { hp:22, r:26, score:640, speed:40,  home:7, draw:dwPolyp     },
+  polyp:    { hp:22, r:26, score:640, speed:40,  home:7, draw:dwPolyp    , prio:true },
   chorister:{ hp:11, r:20, score:420, speed:48,  home:8, draw:dwChorister },
-  warp:     { hp:9,  r:16, score:380, speed:0,   home:9, draw:dwWarp      },
+  warp:     { hp:9,  r:16, score:380, speed:0,   home:9, draw:dwWarp     , prio:true },
   pulsar:   { hp:15, r:22, score:520, speed:36,  home:10, draw:dwPulsar    },
   mote:     { hp:2,  r:9,  score:110, speed:150, home:7, draw:dwMote      }
 });
@@ -3547,7 +3686,8 @@ function update(dt){
 
   /* the off-screen despawn is not a death, but a tell owned by a gone enemy must still cancel */
   for (let i=enemies.length-1;i>=0;i--)
-    if (!updateEnemy(enemies[i],dt)){ enemies[i].alive = false; enemies.splice(i,1); }
+    if (!updateEnemy(enemies[i],dt)){ const e=enemies[i]; e.alive=false;
+      if (e.shieldR>0) shieldCount--; enemies.splice(i,1); }
   if (boss) updateBoss(dt);
 
   /* player bullets */
@@ -3574,6 +3714,8 @@ function update(dt){
     for (let j=enemies.length-1;j>=0;j--){
       const e = enemies[j];
       if (dist2(b.x,b.y,e.x,e.y) < (e.r+b.r)*(e.r+b.r)){
+        /* the shield sends it back before anything else gets to look at it */
+        if (e.type==='prism' && prismReflect(e,b)){ gone = true; break; }
         spark(b.x,b.y,PAL.bolt);
         damageEnemy(e, b.dmg*diff.dmg);
         if (b.pierce>0) b.pierce--; else gone = true;
