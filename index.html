@@ -1392,6 +1392,292 @@ ART.picnic.enemy = {
   }
 };
 
+/* ---- picnic: the bosses ---------------------------------------------------------
+   Batch one of four. Same rules as the enemy roster: the food is chosen to fit the cool
+   band rather than the band bent to fit the food, the geometry is untouched, and anything
+   that tells the player what to do — a shield plate, a guard ring, a linked beam, a core
+   that changes colour by phase — keeps its exact position and its exact meaning. */
+ART.picnic.boss = {
+
+  /* warden · a jar of blueberry jam, and the lid is the plate that seals the core */
+  warden:{
+    draw(b){
+      /* the shelf the pods sit on */
+      ctx.strokeStyle = rgba(PAL.foe,.55); ctx.lineWidth=6;
+      ctx.beginPath(); ctx.moveTo(-62,16); ctx.lineTo(62,16); ctx.stroke();
+      blitSprite(sprite('jamjar', 108, 108, g=>{
+        softShadow(g, 44);
+        /* the glass */
+        g.beginPath(); g.roundRect(-38,-40,76,84,10);
+        roundBody(g, 44, PAL.foeDark, PAL.foeDark); g.fill();
+        /* the jam inside, filled to just under the neck */
+        g.beginPath(); g.roundRect(-32,-24,64,64,8);
+        roundBody(g, 36, PAL.foe, PAL.foeDark); g.fill();
+        /* whole berries suspended in it */
+        g.fillStyle=rgba(PAL.elaser,.55);
+        for (const s of [[-16,6],[10,-6],[-4,18],[19,14],[-22,-12]]){
+          g.beginPath(); g.arc(s[0],s[1],4.5,0,TAU); g.fill(); }
+        /* the label */
+        g.beginPath(); g.roundRect(-24,-4,48,22,4);
+        g.fillStyle='rgba(250,245,232,.92)'; g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.35); g.lineWidth=1.2; g.stroke();
+        /* glass highlight down the left */
+        g.fillStyle='rgba(255,255,255,.22)'; g.beginPath();
+        g.roundRect(-33,-34,7,70,4); g.fill();
+        gloss(g, 40, .3);
+      }), 0, 0, 108, 108, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.5);
+        ctx.beginPath(); ctx.roundRect(-38,-40,76,84,10); ctx.fill(); }
+      ctx.beginPath(); ctx.arc(0,0,16+Math.sin(b.t*3)*2,0,TAU);
+      ctx.fillStyle=rgba(PAL.boss,.9); ctx.fill();
+    },
+    drawPart(b,p){
+      if (p.kind==='shield'){
+        /* the lid, at the exact arc the plate always occupied — it visibly covers the core,
+           and it dulls as it takes damage the way the plate did */
+        ctx.beginPath(); ctx.arc(0,34,50,-Math.PI*.86,-Math.PI*.14);
+        ctx.strokeStyle=rgba(PAL.elaser, .5+(1-p.hp/p.max)*.45); ctx.lineWidth=11; ctx.stroke();
+        ctx.beginPath(); ctx.arc(0,34,50,-Math.PI*.86,-Math.PI*.14);
+        ctx.strokeStyle=rgba(PAL.foeDark,.5); ctx.lineWidth=3; ctx.stroke();
+        /* the knurling round the rim, so it reads as a lid rather than a bar */
+        ctx.strokeStyle=flashFill(.35); ctx.lineWidth=2;
+        for (let i=0;i<=12;i++){ const a=-Math.PI*.86 + i*(Math.PI*.72/12);
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a)*45, 34+Math.sin(a)*45);
+          ctx.lineTo(Math.cos(a)*55, 34+Math.sin(a)*55); ctx.stroke(); }
+        return;
+      }
+      blitSprite(sprite('jarberry', 52, 52, g=>berry(g, 21, true)), 0, 0, 52, 52, 0);
+      ctx.beginPath(); ctx.arc(0,0,8,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    }
+  },
+
+  /* bloom · a flower cake. Six petals of icing, and the core is the piped centre */
+  bloom:{
+    draw(b){
+      ctx.save(); ctx.rotate(-b.spin*.6);
+      blitSprite(sprite('cakebase', 104, 104, g=>{
+        softShadow(g, 42);
+        g.beginPath(); g.arc(0,0,40,0,TAU);
+        roundBody(g, 40, PAL.foe, PAL.foeDark); g.fill();
+        /* a piped rosette border */
+        g.fillStyle=rgba(PAL.elaser,.8);
+        for (let i=0;i<16;i++){ const a=i/16*TAU;
+          g.beginPath(); g.arc(Math.cos(a)*34, Math.sin(a)*34, 5, 0, TAU); g.fill(); }
+        g.beginPath(); g.arc(0,0,26,0,TAU);
+        g.fillStyle='rgba(250,246,236,.55)'; g.fill();
+        gloss(g, 34, .4);
+      }), 0, 0, 104, 104, 0);
+      /* the space original rings this in PAL.crystal -- a PLAYER key on an enemy-owned draw.
+         In space, crystal is amber and enemy fire is hot, so the leak hides. In picnic it is
+         pink on a blue boss and is impossible to miss. Enemy band here. */
+      ctx.strokeStyle=rgba(PAL.elaser,.85); ctx.lineWidth=2.6;
+      ctx.beginPath(); ctx.arc(0,0,40,0,TAU); ctx.stroke();
+      ctx.restore();
+      const pulse = 15+Math.sin(b.t*3)*3;
+      /* the piped centre — still the phase readout it always was */
+      ctx.beginPath(); ctx.arc(0,0,pulse,0,TAU);
+      ctx.fillStyle=rgba(b.phase>1?PAL.ebullet:PAL.boss,.95); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.4)'; ctx.lineWidth=1.6; ctx.stroke();
+    },
+    drawPart(b,p){
+      ctx.rotate(p.a+b.spin);
+      /* the petal, on the exact path the space petal used */
+      ctx.beginPath();
+      ctx.moveTo(-42,0); ctx.quadraticCurveTo(-2,-30,26,0); ctx.quadraticCurveTo(-2,30,-42,0);
+      const g = ctx.createLinearGradient(-42,0,26,0);
+      g.addColorStop(0, rgba(PAL.foeDark,1)); g.addColorStop(.55, rgba(PAL.foe,1));
+      g.addColorStop(1, rgba(PAL.elaser,1));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.boss,.85); ctx.lineWidth=2; ctx.stroke();
+      /* the pipe ridge down the middle of the icing */
+      ctx.strokeStyle='rgba(255,255,255,.3)'; ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(-34,0); ctx.lineTo(18,0); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0,0,7,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    }
+  },
+
+  /* scrapjaw · the nutcracker. Two jaws, and they close on you */
+  scrapjaw:{
+    draw(b){
+      ctx.strokeStyle=rgba(PAL.foe,.5); ctx.lineWidth=7;
+      ctx.beginPath(); ctx.moveTo(-78,26); ctx.lineTo(0,4); ctx.lineTo(78,26); ctx.stroke();
+      blitSprite(sprite('nutcracker', 120, 76, g=>{
+        softShadow(g, 46);
+        g.beginPath(); g.moveTo(-44,-30); g.lineTo(44,-30); g.lineTo(52,20); g.lineTo(-52,20); g.closePath();
+        roundBody(g, 46, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.6); g.lineWidth=2; g.stroke();
+        /* the screw thread up the middle — a nutcracker's working part */
+        g.strokeStyle='rgba(255,255,255,.28)'; g.lineWidth=2.6;
+        for (let i=0;i<5;i++){ g.beginPath();
+          g.moveTo(-14, -22+i*10); g.lineTo(14, -18+i*10); g.stroke(); }
+        /* the cracked shells it has already been through */
+        g.fillStyle=rgba(PAL.elaser,.5);
+        for (const s of [[-32,6],[30,2],[-20,14],[36,14]]){
+          g.beginPath(); g.ellipse(s[0],s[1],6,4.4,.4,0,TAU); g.fill(); }
+        gloss(g, 40, .35);
+      }), 0, 0, 120, 76, 0);
+      if (b.flash>0){
+        ctx.fillStyle=flashFill(.6);
+        ctx.beginPath(); ctx.moveTo(-44,-30); ctx.lineTo(44,-30); ctx.lineTo(52,20); ctx.lineTo(-52,20);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle=rgba(PAL.foe,.8);
+      for (let i=-2;i<=2;i++) ctx.fillRect(i*18-4,-36,8,6);
+    },
+    drawPart(b,p){
+      /* the jaw, same quad the claw used, now a hinged nutcracker arm with a nut in it */
+      ctx.beginPath();
+      ctx.moveTo(0,-18); ctx.lineTo(20*p.side,0); ctx.lineTo(0,18); ctx.lineTo(-8*p.side,0);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(-20*p.side,0,20*p.side,0);
+      g.addColorStop(0, rgba(PAL.foeDark,1)); g.addColorStop(1, rgba(PAL.foe,1));
+      ctx.fillStyle=g; ctx.fill();
+      ctx.strokeStyle=rgba(PAL.foe,.9); ctx.lineWidth=2; ctx.stroke();
+      /* the grip ridges */
+      ctx.strokeStyle='rgba(255,255,255,.3)'; ctx.lineWidth=1.4;
+      for (let i=-1;i<=1;i++){ ctx.beginPath();
+        ctx.moveTo(4*p.side, i*7); ctx.lineTo(15*p.side, i*5); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fillStyle=rgba(PAL.ebullet,.9); ctx.fill();
+    }
+  },
+
+  /* gravedigger · a blackberry the size of a hulk. Its chunks are drupelets, and they come off */
+  gravedigger:{
+    draw(b){
+      ctx.save(); ctx.rotate(-b.spin*.4);
+      blitSprite(sprite('blackberry', 136, 136, g=>{
+        softShadow(g, 56);
+        g.beginPath(); g.arc(0,0,54,0,TAU);
+        roundBody(g, 54, PAL.foeDark, PAL.foeDark); g.fill();
+        /* the drupelets, packed in rings — this is the whole silhouette */
+        for (let ring=0; ring<4; ring++){
+          const rr = 12 + ring*13.5, n = 5 + ring*5;
+          for (let i=0;i<n;i++){
+            const a = i/n*TAU + ring*.4;
+            const x = Math.cos(a)*rr, y = Math.sin(a)*rr;
+            g.beginPath(); g.arc(x, y, 8.5-ring*.7, 0, TAU);
+            const gr = g.createRadialGradient(x-3,y-3,1, x,y,9);
+            gr.addColorStop(0, rgba(PAL.foe,1)); gr.addColorStop(1, rgba(PAL.foeDark,1));
+            g.fillStyle=gr; g.fill();
+          }
+        }
+        gloss(g, 46, .3);
+      }), 0, 0, 136, 136, 0);
+      ctx.strokeStyle=rgba(PAL.boss,.85); ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(0,0,54,0,TAU); ctx.stroke();
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(0,0,22+Math.sin(b.t*3)*3,0,TAU);
+      ctx.fillStyle=rgba(b.phase>=3?PAL.ebullet:PAL.boss,.92); ctx.fill();
+    },
+    drawPart(b,p){
+      ctx.rotate(p.a*3+b.t);
+      /* a broken-off cluster: three drupelets stuck together, at the chunk's radius */
+      for (const o of [[0,-9],[-9,6],[9,6]]){
+        ctx.beginPath(); ctx.arc(o[0],o[1],13,0,TAU);
+        const gr = ctx.createRadialGradient(o[0]-4,o[1]-4,2, o[0],o[1],14);
+        gr.addColorStop(0, rgba(PAL.foe,1)); gr.addColorStop(1, rgba(PAL.foeDark,1));
+        ctx.fillStyle=gr; ctx.fill();
+        ctx.strokeStyle=rgba(PAL.foe,.85); ctx.lineWidth=1.6; ctx.stroke();
+      }
+    }
+  },
+
+  /* forgetwin · salt and pepper mills. Two of them, and the grind arcs between the pair */
+  forgetwin:{
+    draw(b){
+      const guarded = b.parts.some(p=>p.alive);
+      /* the link between the living twins — unchanged, it is the whole mechanic */
+      if (guarded && b.parts.length===2){
+        const a=b.parts[0], c=b.parts[1];
+        if (a.alive && c.alive){
+          ctx.save(); ctx.translate(-b.x,-b.y);
+          const g=ctx.createLinearGradient(a.x,a.y,c.x,c.y);
+          g.addColorStop(0,rgba(PAL.elaser,.8)); g.addColorStop(.5,rgba(PAL.ebullet,.95));
+          g.addColorStop(1,rgba(PAL.elaser,.8));
+          ctx.strokeStyle=g; ctx.lineWidth=7+Math.sin(b.t*14)*2; ctx.globalCompositeOperation='lighter';
+          ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(c.x,c.y); ctx.stroke();
+          ctx.globalCompositeOperation='source-over'; ctx.restore(); ctx.translate(b.x,b.y);
+        }
+      }
+      blitSprite(sprite('millcore', 84, 84, g=>{
+        softShadow(g, 32);
+        g.beginPath(); g.arc(0,0,32,0,TAU);
+        roundBody(g, 32, PAL.foe, PAL.foeDark); g.fill();
+        /* the burr, which is what a mill actually is */
+        g.strokeStyle=rgba(PAL.foeDark,.6); g.lineWidth=2.4;
+        for (let i=0;i<10;i++){ const a=i/10*TAU;
+          g.beginPath(); g.moveTo(Math.cos(a)*12,Math.sin(a)*12);
+          g.lineTo(Math.cos(a+.5)*28,Math.sin(a+.5)*28); g.stroke(); }
+        gloss(g, 28, .4);
+      }), 0, 0, 84, 84, 0);
+      ctx.strokeStyle=rgba(guarded?PAL.foe:PAL.boss,.9); ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.arc(0,0,32,0,TAU); ctx.stroke();
+      /* guarded vs open is the read that matters, so it keeps both its colours */
+      ctx.beginPath(); ctx.arc(0,0,13+Math.sin(b.t*5)*2,0,TAU);
+      ctx.fillStyle=rgba(guarded?PAL.foeDark:PAL.ebullet,.95); ctx.fill();
+    },
+    drawPart(b,p){
+      ctx.rotate(b.t*.8);
+      blitSprite(sprite('mill', 76, 76, g=>{
+        softShadow(g, 30);
+        /* the body: a tapered wooden mill seen end-on */
+        g.beginPath(); g.arc(0,0,29,0,TAU);
+        roundBody(g, 29, PAL.foe, PAL.foeDark); g.fill();
+        g.strokeStyle=rgba(PAL.foeDark,.55); g.lineWidth=2;
+        for (let i=1;i<=3;i++){ g.beginPath(); g.arc(0,0,29-i*7,0,TAU); g.stroke(); }
+        /* the crank on top */
+        g.beginPath(); g.roundRect(-4,-34,8,12,3);
+        g.fillStyle=rgba(PAL.elaser,.95); g.fill();
+        gloss(g, 25, .45);
+      }), 0, 0, 76, 76, 0);
+      ctx.strokeStyle=rgba(PAL.boss,.9); ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.arc(0,0,29,0,TAU); ctx.stroke();
+      /* likewise: the space twin core is PAL.crystal. Enemy band. */
+      ctx.beginPath(); ctx.arc(0,0,11,0,TAU); ctx.fillStyle=rgba(PAL.elaser,.9); ctx.fill();
+    }
+  },
+
+  /* solaris · a fig, cut. The flesh radiates from a bright centre, which is exactly what the
+     maw always was, and a fig is purple without being asked to be */
+  solaris:{
+    draw(b){
+      for (let i=1;i<=4;i++){
+        ctx.strokeStyle=rgba(PAL.boss,.12*i); ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(0,0,66+i*16,0,TAU); ctx.stroke();
+      }
+      ctx.save(); ctx.rotate(b.spin);
+      blitSprite(sprite('fig', 156, 156, g=>{
+        softShadow(g, 64);
+        /* the skin */
+        g.beginPath(); g.arc(0,0,62,0,TAU);
+        roundBody(g, 62, PAL.foeDark, PAL.foeDark); g.fill();
+        /* the pale rind just inside it */
+        g.beginPath(); g.arc(0,0,55,0,TAU);
+        g.fillStyle=rgba(PAL.star,.5); g.fill();
+        /* the flesh */
+        g.beginPath(); g.arc(0,0,50,0,TAU);
+        roundBody(g, 50, PAL.foe, PAL.foeDark); g.fill();
+        /* seed threads radiating out of the centre */
+        g.strokeStyle=rgba(PAL.elaser,.55); g.lineWidth=1.6;
+        for (let i=0;i<40;i++){ const a=i/40*TAU;
+          g.beginPath(); g.moveTo(Math.cos(a)*10,Math.sin(a)*10);
+          g.lineTo(Math.cos(a)*48,Math.sin(a)*48); g.stroke(); }
+        g.fillStyle=rgba(PAL.elaser,.75);
+        for (let i=0;i<54;i++){ const a=i/54*TAU*3.7, r=12+((i*13)%36);
+          g.beginPath(); g.arc(Math.cos(a)*r,Math.sin(a)*r,1.7,0,TAU); g.fill(); }
+        gloss(g, 50, .3);
+      }), 0, 0, 156, 156, 0);
+      if (b.flash>0){ ctx.fillStyle=flashFill(.6);
+        ctx.beginPath(); ctx.arc(0,0,62,0,TAU); ctx.fill(); }
+      ctx.restore();
+      const g = ctx.createRadialGradient(0,0,0,0,0,38);
+      g.addColorStop(0,rgba(PAL.ebullet,.95)); g.addColorStop(1,rgba(PAL.ebullet,0));
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,34+Math.sin(b.t*6)*4,0,TAU); ctx.fill();
+    }
+  }
+};
+
 function applySkin(key){
   if (!SKIN[key]) key = 'space';
   skinKey = key;
@@ -5577,9 +5863,16 @@ function drawPullField(){
 }
 function drawBoss(){
   const b = boss, d = b.def;
+  /* A skin may override any of the three hooks independently, so a boss can take picnic art for
+     its hull while still using the space drawing for its parts — which is what lets 24 bosses
+     land six at a time without a half-finished one looking broken. */
+  const ba = art('boss', d.key);
+  const bDraw  = (ba && ba.draw)      || d.draw;
+  const bPart  = (ba && ba.drawPart)  || d.drawPart;
+  const bExtra = (ba && ba.drawExtra) || d.drawExtra;
   /* drawExtra paints in untranslated screen space and toggles its own composite op, so it is
      deliberately outside the dying transform — and suppressed once the hull is coming apart. */
-  if (d.drawExtra && !b.dying) d.drawExtra(b);
+  if (bExtra && !b.dying) bExtra(b);
 
   const dy = b.dying, k = dy ? clamp(dy.t/dy.dur,0,1) : 0;
   if (dy){
@@ -5598,12 +5891,12 @@ function drawBoss(){
   for (const p of b.parts){
     if (!p.alive) continue;
     ctx.save(); ctx.translate(p.x,p.y);
-    if (d.drawPart) d.drawPart(b,p);
+    if (bPart) bPart(b,p);
     ctx.restore();
     if (!dy) addGlow(p.x,p.y,p.r*1.5,PAL.foe,.5);
   }
   ctx.save(); ctx.translate(b.x,b.y);
-  d.draw(b);
+  bDraw(b);
   if (dy){                                  /* the wash: hull burning out from the inside */
     ctx.globalCompositeOperation = 'lighter';
     const g = ctx.createRadialGradient(0,0,0,0,0,b.r*1.35);
