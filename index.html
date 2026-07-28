@@ -249,7 +249,7 @@ function loadSave(){
 function saveSave(){
   try{ localStorage.setItem(SAVE_KEY, JSON.stringify({
     settings:Settings, best:Best,
-    pref:{ diff:diff.key, speed:speedIdx, muted:Sound.muted }
+    pref:{ diff:diff.key, speed:speedIdx, muted:Sound.muted, skin:skinKey }
   })); }catch(e){}
 }
 function recordSectorGrade(levelIndex, gi){
@@ -396,11 +396,23 @@ function bandOf(c){
 function hullFill(a){ const c=PAL.foeDark; return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')'; }
 function flashFill(a){ const c=PAL.flash; return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')'; }
 
+/* The HUD, veils and buttons are DOM, driven by CSS custom properties — so a skin restyles
+   the whole chrome by setting them, with no markup changes. */
+const SKIN_CSS = {
+  space:  { void:'#04070f', ink:'#e8f6f2', dim:'#7c9a97',
+            jade:'#6ffbc0', rose:'#ff5aa8', amber:'#ffc978' },
+  picnic: { void:'#3f6b4a', ink:'#fff6ea', dim:'#cbb79c',
+            jade:'#ff8f6b', rose:'#7ec4d6', amber:'#ffd45c' }
+};
 function applySkin(key){
   if (!SKIN[key]) key = 'space';
   skinKey = key;
   Object.assign(PAL, SKIN[key].pal);
   applyPalette(typeof levelIdx==='number' ? levelIdx : 0);   /* re-layer the sector variant */
+  const css = SKIN_CSS[key], root = document.documentElement;
+  for (const k in css) root.style.setProperty('--'+k, css[k]);
+  /* applyPalette above already rebuilt the nebula and starfield, and nothing else here
+     is baked at boot — so this is safe to call mid-fight */
 }
 function applyPalette(i){
   /* sector variants belong to the skin: space has twelve, and a skin with none simply keeps
@@ -582,7 +594,10 @@ function buildStars(){
   const counts = [Math.round(W*H/9000*qf), Math.round(W*H/16000*qf), Math.round(W*H/30000*qf)];
   for (let l=0;l<3;l++)
     for (let i=0;i<counts[l];i++)
-      stars[l].push({ x:rnd(0,W), y:rnd(0,H), r:rnd(.4,1.1)+l*.35, s:(l+1)*(l+1)*7+10, tw:rnd(0,TAU) });
+      /* frnd, not rnd: the starfield is pure decoration, and a skin switch rebuilds it
+         mid-run — drawing from the seeded stream here would desync the simulation, which is
+         exactly the promise a skin must never break */
+      stars[l].push({ x:frnd(0,W), y:frnd(0,H), r:frnd(.4,1.1)+l*.35, s:(l+1)*(l+1)*7+10, tw:frnd(0,TAU) });
 }
 function buildNebula(){
   const s = 420;
@@ -590,16 +605,16 @@ function buildNebula(){
   nctx.clearRect(0,0,s,s);
   nctx.globalCompositeOperation = 'lighter';
   for (let i=0;i<46;i++){
-    const c = PAL.neb[i%3], x=rnd(0,s), y=rnd(0,s), r=rnd(s*.09,s*.32);
+    const c = PAL.neb[i%3], x=frnd(0,s), y=frnd(0,s), r=frnd(s*.09,s*.32);
     const g = nctx.createRadialGradient(x,y,0,x,y,r);
-    g.addColorStop(0, rgba(c, rnd(.10,.24)*PAL.dust));
+    g.addColorStop(0, rgba(c, frnd(.10,.24)*PAL.dust));
     g.addColorStop(.5, rgba(c,.06)); g.addColorStop(1, rgba(c,0));
     nctx.fillStyle=g; nctx.beginPath(); nctx.arc(x,y,r,0,TAU); nctx.fill();
   }
   for (let i=0;i<160;i++){
-    const c = pick(PAL.neb);
-    nctx.fillStyle = rgba(c, rnd(.04,.13)*PAL.dust);
-    nctx.beginPath(); nctx.ellipse(rnd(0,s),rnd(0,s),rnd(2,26),rnd(1,5),rnd(0,TAU),0,TAU); nctx.fill();
+    const c = PAL.neb[Math.floor(frnd(0,PAL.neb.length))%PAL.neb.length];
+    nctx.fillStyle = rgba(c, frnd(.04,.13)*PAL.dust);
+    nctx.beginPath(); nctx.ellipse(frnd(0,s),frnd(0,s),frnd(2,26),frnd(1,5),frnd(0,TAU),0,TAU); nctx.fill();
   }
   nctx.globalCompositeOperation = 'source-over';
 }
@@ -607,9 +622,12 @@ const debris = [];
 function spawnDebris(){
   const n = 5 + Math.round(W*H/260000);
   while (debris.length < n){
-    const pts=[], sides=rint(6,9), sc=rnd(16,52);
-    for (let i=0;i<sides;i++){ const a=i/sides*TAU, r=sc*rnd(.6,1); pts.push([Math.cos(a)*r,Math.sin(a)*r]); }
-    debris.push({ x:rnd(0,W), y:rnd(-H,H), pts, rot:rnd(0,TAU), spin:rnd(-.15,.15), v:rnd(9,26), sc });
+    /* also the cosmetic stream: spawnDebris is called from the RENDER path, which runs at a
+       different rate than the fixed-step simulation — so drawing from the seeded stream here
+       made the sim depend on how many frames the device happened to draw */
+    const pts=[], sides=Math.floor(frnd(6,10)), sc=frnd(16,52);
+    for (let i=0;i<sides;i++){ const a=i/sides*TAU, r=sc*frnd(.6,1); pts.push([Math.cos(a)*r,Math.sin(a)*r]); }
+    debris.push({ x:frnd(0,W), y:frnd(-H,H), pts, rot:frnd(0,TAU), spin:frnd(-.15,.15), v:frnd(9,26), sc });
   }
 }
 
@@ -4148,7 +4166,7 @@ function drawDebrisLayer(dt){
   if (!debris.length) spawnDebris();
   for (const d of debris){
     d.y += d.v*dt*(state==='playing'?1:.4); d.rot += d.spin*dt;
-    if (d.y-d.sc>H){ d.y=-d.sc*2; d.x=rnd(0,W); }
+    if (d.y-d.sc>H){ d.y=-d.sc*2; d.x=frnd(0,W); }   /* recycle, still cosmetic-stream only */
     ctx.save(); ctx.translate(d.x,d.y); ctx.rotate(d.rot);
     ctx.beginPath(); ctx.moveTo(d.pts[0][0],d.pts[0][1]);
     for (let i=1;i<d.pts.length;i++) ctx.lineTo(d.pts[i][0],d.pts[i][1]);
@@ -4863,6 +4881,9 @@ function screenTitle(){
   optionRow(opts,'Difficulty', Object.values(DIFF).map(d=>({label:d.label,note:d.note})),
     Object.values(DIFF).findIndex(d=>d.key===diff.key), i=>{ diff = Object.values(DIFF)[i]; saveSave(); });
   optionRow(opts,'Game speed', SPEEDS.map(s=>({label:s.label,note:s.note})), speedIdx, i=>{ speedIdx=i; saveSave(); });
+  { const keys = Object.keys(SKIN);
+    optionRow(opts,'Skin', keys.map(k=>({label:SKIN[k].label,note:SKIN[k].note})),
+      keys.indexOf(skinKey), i=>{ applySkin(keys[i]); saveSave(); screenTitle(); }); }
 
   $('go').onclick = ()=>startGame(pickedSector);
   $('help').onclick = screenHelp;
@@ -5061,6 +5082,9 @@ function togglePause(){
         <button class="btn ghost" id="quit">Abandon sector</button>
       </div>`;
     optionRow($('popts'),'Game speed', SPEEDS.map(s=>({label:s.label,note:s.note})), speedIdx, i=>{ speedIdx=i; });
+    { const keys = Object.keys(SKIN);
+      optionRow($('popts'),'Skin', keys.map(k=>({label:SKIN[k].label,note:SKIN[k].note})),
+        keys.indexOf(skinKey), i=>{ applySkin(keys[i]); saveSave(); }); }
     $('resume').onclick = togglePause;
     $('quit').onclick = screenTitle;
   } else if (state==='paused'){
@@ -5200,6 +5224,10 @@ if (_pref){
   if (typeof _pref.speed==='number' && SPEEDS[_pref.speed]) speedIdx = _pref.speed;
   if (_pref.muted) Sound.setMuted(true);
 }
+/* unconditional, and outside the _pref guard: a save written before skins existed has no
+   skin key, and a first-ever launch has no save at all — both must still get their CSS
+   custom properties set, or the chrome renders unstyled */
+applySkin((_pref && _pref.skin) || 'space');
 resize();
 setQualityPref();
 spawnDebris();
